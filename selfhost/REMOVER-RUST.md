@@ -103,9 +103,13 @@ pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
 - **Espelha:** `run_tests` + injeção do import em `src/main.rs`.
 - **Validar:** `lextest selfhost` reproduz o mesmo placar do `lex test` do Rust.
 
-## Fase D — Span tracking (lexer + parser)  ·  esforço: M
-**Por quê:** pré-requisito p/ diagnósticos com linha/coluna (Fase E). Hoje o
-`Token` não guarda posição e o parser não propaga span.
+## Fase D — Span tracking (lexer + parser)  ·  esforço: M  ·  ✅ FEITO
+**Por quê:** pré-requisito p/ diagnósticos com linha/coluna (Fase E).
+
+> **FEITO**: `Token` ganhou `pos` (offset de byte de início); o lexer preenche em
+> todas as fábricas (`tk`/`tkText`/`tkInt`/`tkFloat` recebem `pos`). O nó `Var`
+> ganhou `pos` (posição do identificador). Bootstrap segue em ponto-fixo.
+> (Outros nós podem ganhar span quando a Fase E precisar de mais precisão.)
 
 - **Lexer** (`lexer.lex`): cada `Token` carrega o offset de início (byte). Já lê por
   byte; só adicionar o campo `pos` e preenchê-lo.
@@ -115,9 +119,20 @@ pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
 - **Validar:** unit — o span de um nó bate com o trecho no fonte (usar `diag.lex`
   pra renderizar e conferir o caret).
 
-## Fase E — `lex check` self-hosted (sema com diagnósticos)  ·  esforço: XL  (depende de D)
+## Fase E — `lex check` self-hosted (sema com diagnósticos)  ·  esforço: XL  ·  🟡 SLICE FEITO
 **Por quê:** hoje o `lexlsp` chama o `lex check --json` **do Rust**. Pra cortar essa
 dependência, a sema-em-lex precisa emitir diagnósticos.
+
+> **SLICE FEITO — variável indefinida**: `checkProgram(prog): Diag[]` em `sema.lex`
+> + driver `lexcheck.lex`. Conjunto de DEFINIDOS = funções/classes/enums + `this`/
+> `Terminal` + params+locais (let/for-of/match-bind) de TODAS as funções; um `Var`
+> fora dele → `undefined variable: 'X'` com posição. Resolve imports (`loadProgram`)
+> → SEM falso-positivo em código real (`lexcheck selfhost/parser.lex` → `[]`). Saída
+> JSON `[{line,col,endLine,endCol,message}]` (0-based) compatível c/ o `lexlsp`.
+> *VALIDADO*: `return zzz`→undefined; ok→`[]`; parser.lex→`[]`. **FALTA p/ paridade**:
+> erros de sintaxe (parser é silencioso), tipo/aridade/campo inexistente, escopo
+> (slice é grosseiro: "definido em qq lugar = ok"), + rewire do `lexlsp` p/ usar o
+> `lexcheck` em vez do Rust.
 
 - **Sema** (`sema.lex`): além das tabelas (F6.2), detectar erros e acumular
   `Diagnostic { line, col, endLine, endCol, message }`: variável indefinida,

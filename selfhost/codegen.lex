@@ -27,7 +27,7 @@ import {
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, Func, Param, Program, Parser
 } from "./parser"
-import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, elementTy } from "./sema"
+import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, elementTy, addUniq, idxOf, without } from "./sema"
 
 fn boolLit(b: bool): string {
     if (b) { return "1"; }
@@ -98,22 +98,6 @@ fn runtimeFn(name: string): string {
 // ── coleta de variáveis locais (p/ hoistar as alloca pro bloco entry) ────────
 // LLVM exige nomes SSA únicos por função; um `let x` em blocos irmãos geraria
 // duas `%x.addr = alloca`. Hoistamos uma alloca por nome no entry (domina tudo).
-fn addUniq(names: string[], n: string): i64 {
-    for (const x of names) { if (strEq(x, n)) { return 0; } }
-    names.push(n);
-    return 0;
-}
-fn idxOf(names: string[], n: string): i64 {
-    let i: i64 = 0;
-    while (i < names.len()) { if (strEq(names[i], n)) { return i; } i = i + 1; }
-    return -1;
-}
-// nomes em `list` que NÃO estão em `exclude` (p/ tirar os globais dos locais).
-fn without(list: string[], exclude: string[]): string[] {
-    let out: string[] = [];
-    for (const n of list) { if (idxOf(exclude, n) < 0) { out.push(n); } }
-    return out;
-}
 // nomes de const/let DIRETOS do corpo (sem recursão) — viram globais (gget/gset)
 // p/ que arrows os enxerguem (captura via global, sem closure/env).
 fn directLetNames(stmts: Stmt[]): string[] {

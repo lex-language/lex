@@ -18,6 +18,26 @@ import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call, ArrayLit,
     Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm, Lambda
 } from "./parser"
+import {
+    Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, ForOfStmt, ForStmt, ExprStmt
+} from "./parser"
+
+// ── utilidades de conjunto de nomes (usadas pela sema E pelo codegen) ────────
+fn addUniq(names: string[], n: string): i64 {
+    for (const x of names) { if (strEq(x, n)) { return 0; } }
+    names.push(n);
+    return 0;
+}
+fn idxOf(names: string[], n: string): i64 {
+    let i: i64 = 0;
+    while (i < names.len()) { if (strEq(names[i], n)) { return i; } i = i + 1; }
+    return -1;
+}
+fn without(list: string[], exclude: string[]): string[] {
+    let out: string[] = [];
+    for (const n of list) { if (idxOf(exclude, n) < 0) { out.push(n); } }
+    return out;
+}
 
 // ── tabela de classes ────────────────────────────────────────────────────────
 class FieldInfo {
@@ -485,4 +505,151 @@ fn inferType(declSrc: string, exprSrc: string, names: string[], types: string[])
     while (i < names.len()) { scope.set(names[i], types[i]); i = i + 1; }
     const p: Parser = new Parser(lexSrc(exprSrc));
     return sm.typeOf(p.parseExpr(), scope);
+}
+
+// ── checagem: variável indefinida (Fase E, slice) ────────────────────────────
+// Um diagnóstico carrega o offset de byte (linha/coluna são derivados no driver).
+class Diag {
+    pos: i64           // offset de byte de início
+    span: i64          // comprimento (p/ endCol)
+    msg: string
+    constructor(pos: i64, span: i64, msg: string) { this.pos = pos; this.span = span; this.msg = msg }
+}
+
+// coleta nomes DECLARADOS (let/const/for-of) recursivamente — para o conjunto
+// de nomes "definidos" (abordagem grosseira: definido em QUALQUER lugar = ok).
+fn declStmts(stmts: Stmt[], names: string[]): i64 {
+    for (const s of stmts) { declStmt(s, names); }
+    return 0;
+}
+fn declStmt(s: Stmt, names: string[]): i64 {
+    return match (s) {
+        LetStmt l => addUniq(names, l.name),
+        ForOfStmt fo => declForOf(fo, names),
+        ForStmt fr => declForC(fr, names),
+        IfStmt f => declIf(f, names),
+        WhileStmt w => declStmts(w.body, names),
+        _ => 0
+    };
+}
+fn declForOf(fo: ForOfStmt, names: string[]): i64 { addUniq(names, fo.name); return declStmts(fo.body, names); }
+fn declForC(fr: ForStmt, names: string[]): i64 {
+    if (fr.hasInit) { declStmt(fr.init, names); }
+    return declStmts(fr.body, names);
+}
+fn declIf(f: IfStmt, names: string[]): i64 { declStmts(f.thenB, names); return declStmts(f.elseB, names); }
+
+// ── walk de checagem: cada Var fora de `defined` vira um diagnóstico ──────────
+fn checkVar(v: Var, defined: string[], diags: Diag[]): i64 {
+    if (idxOf(defined, v.name) < 0) {
+        diags.push(new Diag(v.pos, len(v.name), concat(concat("undefined variable: '", v.name), "'")));
+    }
+    return 0;
+}
+fn checkExprs(es: Expr[], defined: string[], diags: Diag[]): i64 {
+    for (const e of es) { checkExpr(e, defined, diags); }
+    return 0;
+}
+fn checkBin(b: Binary, defined: string[], diags: Diag[]): i64 {
+    checkExpr(b.lhs, defined, diags); return checkExpr(b.rhs, defined, diags);
+}
+fn checkMC(m: MethodCall, defined: string[], diags: Diag[]): i64 {
+    checkExpr(m.base, defined, diags); return checkExprs(m.args, defined, diags);
+}
+fn checkIdx(ix: Index, defined: string[], diags: Diag[]): i64 {
+    checkExpr(ix.base, defined, diags); return checkExpr(ix.index, defined, diags);
+}
+fn checkMatch(mt: Match, defined: string[], diags: Diag[]): i64 {
+    checkExpr(mt.subject, defined, diags);
+    for (const a of mt.arms) { addUniq(defined, a.bind); checkExpr(a.body, defined, diags); }
+    return 0;
+}
+fn checkExpr(e: Expr, defined: string[], diags: Diag[]): i64 {
+    return match (e) {
+        Var v => checkVar(v, defined, diags),
+        Unary u => checkExpr(u.operand, defined, diags),
+        Binary b => checkBin(b, defined, diags),
+        Call c => checkExprs(c.args, defined, diags),
+        MethodCall m => checkMC(m, defined, diags),
+        ArrayLit a => checkExprs(a.items, defined, diags),
+        MapLit ml => checkExprs(ml.vals, defined, diags),
+        StructLit sl => checkExprs(sl.vals, defined, diags),
+        Index ix => checkIdx(ix, defined, diags),
+        Field f => checkExpr(f.base, defined, diags),
+        NewExpr ne => checkExprs(ne.args, defined, diags),
+        Template t => checkExprs(t.parts, defined, diags),
+        Match mt => checkMatch(mt, defined, diags),
+        _ => 0
+    };
+}
+fn checkStmts(stmts: Stmt[], defined: string[], diags: Diag[]): i64 {
+    for (const s of stmts) { checkStmt(s, defined, diags); }
+    return 0;
+}
+fn checkIf(f: IfStmt, defined: string[], diags: Diag[]): i64 {
+    checkExpr(f.cond, defined, diags);
+    checkStmts(f.thenB, defined, diags);
+    return checkStmts(f.elseB, defined, diags);
+}
+fn checkWhile(w: WhileStmt, defined: string[], diags: Diag[]): i64 {
+    checkExpr(w.cond, defined, diags); return checkStmts(w.body, defined, diags);
+}
+fn checkForOf(fo: ForOfStmt, defined: string[], diags: Diag[]): i64 {
+    checkExpr(fo.iter, defined, diags); return checkStmts(fo.body, defined, diags);
+}
+fn checkForC(fr: ForStmt, defined: string[], diags: Diag[]): i64 {
+    if (fr.hasInit) { checkStmt(fr.init, defined, diags); }
+    if (fr.hasCond) { checkExpr(fr.cond, defined, diags); }
+    if (fr.hasUpdate) { checkStmt(fr.update, defined, diags); }
+    return checkStmts(fr.body, defined, diags);
+}
+fn checkAssign(a: AssignStmt, defined: string[], diags: Diag[]): i64 {
+    checkExpr(a.target, defined, diags); return checkExpr(a.value, defined, diags);
+}
+fn checkReturn(r: ReturnStmt, defined: string[], diags: Diag[]): i64 {
+    if (r.hasValue) { return checkExpr(r.value, defined, diags); }
+    return 0;
+}
+fn checkStmt(s: Stmt, defined: string[], diags: Diag[]): i64 {
+    return match (s) {
+        LetStmt l => checkExpr(l.value, defined, diags),
+        AssignStmt a => checkAssign(a, defined, diags),
+        ReturnStmt r => checkReturn(r, defined, diags),
+        IfStmt f => checkIf(f, defined, diags),
+        WhileStmt w => checkWhile(w, defined, diags),
+        ForOfStmt fo => checkForOf(fo, defined, diags),
+        ForStmt fr => checkForC(fr, defined, diags),
+        ExprStmt e => checkExpr(e.expr, defined, diags),
+        _ => 0
+    };
+}
+
+// checa um programa inteiro → lista de diagnósticos de variável indefinida.
+fn checkProgram(prog: Program): Diag[] {
+    let defined: string[] = [];
+    addUniq(defined, "this");
+    addUniq(defined, "Terminal");          // prelúdio
+    for (const f of prog.funcs) { addUniq(defined, f.name); }
+    for (const c of prog.classes) { addUniq(defined, c.name); }
+    for (const e of prog.enums) { addUniq(defined, e.name); }
+    // params + locais de todas as funções/métodos/main (definido em qq lugar = ok)
+    for (const f of prog.funcs) {
+        for (const p of f.params) { addUniq(defined, p.name); }
+        declStmts(f.body, defined);
+    }
+    for (const c of prog.classes) {
+        for (const m of c.methods) {
+            for (const p of m.params) { addUniq(defined, p.name); }
+            declStmts(m.body, defined);
+        }
+    }
+    declStmts(prog.main, defined);
+
+    let diags: Diag[] = [];
+    for (const f of prog.funcs) { checkStmts(f.body, defined, diags); }
+    for (const c of prog.classes) {
+        for (const m of c.methods) { checkStmts(m.body, defined, diags); }
+    }
+    checkStmts(prog.main, defined, diags);
+    return diags;
 }

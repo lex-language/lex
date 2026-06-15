@@ -41,7 +41,8 @@ class StrLit extends Expr {
 }
 class Var extends Expr {
     name: string
-    constructor(name: string) { this.name = name }
+    pos: i64           // offset de byte do identificador no fonte (p/ diagnósticos)
+    constructor(name: string, pos: i64) { this.name = name; this.pos = pos }
 }
 class Unary extends Expr {
     op: Tok        // Tok.Bang / Tok.Minus / Tok.Tilde
@@ -422,9 +423,9 @@ class Parser {
             if (this.peekKind() == Tok.LParen) {
                 return new Call(t.text, this.parseArgs());
             }
-            return new Var(t.text);
+            return new Var(t.text, t.pos);
         }
-        return new Var("<?>");   // token inesperado (PoC)
+        return new Var("<?>", t.pos);   // token inesperado (PoC)
     }
 
     // pula `<...>` de argumentos de tipo (ex.: `new Box<i64>(...)`), se houver.

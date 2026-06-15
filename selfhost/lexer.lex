@@ -35,19 +35,21 @@ class Token {
     text: string
     ival: i64
     fval: f64
-    constructor(kind: Tok, text: string, ival: i64, fval: f64) {
+    pos: i64          // offset de byte de início no fonte (p/ diagnósticos)
+    constructor(kind: Tok, text: string, ival: i64, fval: f64, pos: i64) {
         this.kind = kind
         this.text = text
         this.ival = ival
         this.fval = fval
+        this.pos = pos
     }
 }
 
-// ── fábricas curtas ────────────────────────────────────────────────────────
-fn tk(kind: Tok): Token { return new Token(kind, "", 0, 0.0); }
-fn tkText(kind: Tok, text: string): Token { return new Token(kind, text, 0, 0.0); }
-fn tkInt(text: string): Token { return new Token(Tok.Int, text, parseInt(text), 0.0); }
-fn tkFloat(text: string): Token { return new Token(Tok.Float, text, 0, parseFloat(text)); }
+// ── fábricas curtas (pos = offset de byte de início) ───────────────────────
+fn tk(kind: Tok, pos: i64): Token { return new Token(kind, "", 0, 0.0, pos); }
+fn tkText(kind: Tok, text: string, pos: i64): Token { return new Token(kind, text, 0, 0.0, pos); }
+fn tkInt(text: string, pos: i64): Token { return new Token(Tok.Int, text, parseInt(text), 0.0, pos); }
+fn tkFloat(text: string, pos: i64): Token { return new Token(Tok.Float, text, 0, parseFloat(text), pos); }
 
 // ── classificadores de byte (ASCII) ────────────────────────────────────────
 fn isDigit(c: i64): bool { return c >= 48 && c <= 57; }                 // 0-9
@@ -131,7 +133,7 @@ fn lexSrc(src: string): Token[] {
 
         // quebra de linha → token (runs consecutivos colapsam em um)
         if (c == 10) {
-            if (lastKind(toks) != Tok.Newline) { toks.push(tk(Tok.Newline)); }
+            if (lastKind(toks) != Tok.Newline) { toks.push(tk(Tok.Newline, i)); }
             i = i + 1;
             continue;
         }
@@ -146,6 +148,7 @@ fn lexSrc(src: string): Token[] {
 
         // string: "..." com escapes \n \r \t \\ \"
         if (c == 34) {
+            const strStart: i64 = i;
             i = i + 1;
             let s: string = "";
             while (i < n && peek8(src, i) != 34) {
@@ -159,12 +162,13 @@ fn lexSrc(src: string): Token[] {
                 i = i + 1;
             }
             i = i + 1;                                  // consome o " final
-            toks.push(tkText(Tok.Str, s));
+            toks.push(tkText(Tok.Str, s, strStart));
             continue;
         }
 
         // template literal (TODO: ${} e JSX). Scan ingênuo até a crase de fecho.
         if (c == 96) {
+            const tmplStart: i64 = i;
             i = i + 1;
             const tstart: i64 = i;
             while (i < n && peek8(src, i) != 96) {
@@ -173,7 +177,7 @@ fn lexSrc(src: string): Token[] {
             }
             const body: string = substring(src, tstart, i);
             if (i < n) { i = i + 1; }                   // consome a crase
-            toks.push(tkText(Tok.Template, body));
+            toks.push(tkText(Tok.Template, body, tmplStart));
             continue;
         }
 
@@ -201,8 +205,8 @@ fn lexSrc(src: string): Token[] {
                 }
             }
             const txt: string = substring(src, start, i);
-            if (isFloat) { toks.push(tkFloat(txt)); }
-            else { toks.push(tkInt(txt)); }
+            if (isFloat) { toks.push(tkFloat(txt, start)); }
+            else { toks.push(tkInt(txt, start)); }
             continue;
         }
 
@@ -215,80 +219,80 @@ fn lexSrc(src: string): Token[] {
             }
             const word: string = substring(src, start, i);
             const kind: Tok = keywordKind(word);
-            if (kind == Tok.Ident) { toks.push(tkText(Tok.Ident, word)); }
-            else { toks.push(tk(kind)); }
+            if (kind == Tok.Ident) { toks.push(tkText(Tok.Ident, word, start)); }
+            else { toks.push(tk(kind, start)); }
             continue;
         }
 
         // ── pontuação e operadores (cada ramo encerra com continue) ─────────
-        if (c == 40) { toks.push(tk(Tok.LParen)); i = i + 1; continue; }
-        if (c == 41) { toks.push(tk(Tok.RParen)); i = i + 1; continue; }
-        if (c == 123) { toks.push(tk(Tok.LBrace)); i = i + 1; continue; }
-        if (c == 125) { toks.push(tk(Tok.RBrace)); i = i + 1; continue; }
-        if (c == 91) { toks.push(tk(Tok.LBracket)); i = i + 1; continue; }
-        if (c == 93) { toks.push(tk(Tok.RBracket)); i = i + 1; continue; }
-        if (c == 58) { toks.push(tk(Tok.Colon)); i = i + 1; continue; }
-        if (c == 59) { toks.push(tk(Tok.Semicolon)); i = i + 1; continue; }
-        if (c == 44) { toks.push(tk(Tok.Comma)); i = i + 1; continue; }
-        if (c == 94) { toks.push(tk(Tok.Caret)); i = i + 1; continue; }
-        if (c == 126) { toks.push(tk(Tok.Tilde)); i = i + 1; continue; }
+        if (c == 40) { toks.push(tk(Tok.LParen, i)); i = i + 1; continue; }
+        if (c == 41) { toks.push(tk(Tok.RParen, i)); i = i + 1; continue; }
+        if (c == 123) { toks.push(tk(Tok.LBrace, i)); i = i + 1; continue; }
+        if (c == 125) { toks.push(tk(Tok.RBrace, i)); i = i + 1; continue; }
+        if (c == 91) { toks.push(tk(Tok.LBracket, i)); i = i + 1; continue; }
+        if (c == 93) { toks.push(tk(Tok.RBracket, i)); i = i + 1; continue; }
+        if (c == 58) { toks.push(tk(Tok.Colon, i)); i = i + 1; continue; }
+        if (c == 59) { toks.push(tk(Tok.Semicolon, i)); i = i + 1; continue; }
+        if (c == 44) { toks.push(tk(Tok.Comma, i)); i = i + 1; continue; }
+        if (c == 94) { toks.push(tk(Tok.Caret, i)); i = i + 1; continue; }
+        if (c == 126) { toks.push(tk(Tok.Tilde, i)); i = i + 1; continue; }
 
         if (c == 46) {                                  // . .. ...
             if (at(src, i + 1, n) == 46 && at(src, i + 2, n) == 46) {
-                toks.push(tk(Tok.DotDotDot)); i = i + 3; continue;
+                toks.push(tk(Tok.DotDotDot, i)); i = i + 3; continue;
             }
-            if (at(src, i + 1, n) == 46) { toks.push(tk(Tok.DotDot)); i = i + 2; continue; }
-            toks.push(tk(Tok.Dot)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 46) { toks.push(tk(Tok.DotDot, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Dot, i)); i = i + 1; continue;
         }
         if (c == 43) {                                  // + ++ +=
-            if (at(src, i + 1, n) == 43) { toks.push(tk(Tok.PlusPlus)); i = i + 2; continue; }
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.PlusEq)); i = i + 2; continue; }
-            toks.push(tk(Tok.Plus)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 43) { toks.push(tk(Tok.PlusPlus, i)); i = i + 2; continue; }
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.PlusEq, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Plus, i)); i = i + 1; continue;
         }
         if (c == 45) {                                  // - -> -- -=
-            if (at(src, i + 1, n) == 62) { toks.push(tk(Tok.Arrow)); i = i + 2; continue; }
-            if (at(src, i + 1, n) == 45) { toks.push(tk(Tok.MinusMinus)); i = i + 2; continue; }
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.MinusEq)); i = i + 2; continue; }
-            toks.push(tk(Tok.Minus)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 62) { toks.push(tk(Tok.Arrow, i)); i = i + 2; continue; }
+            if (at(src, i + 1, n) == 45) { toks.push(tk(Tok.MinusMinus, i)); i = i + 2; continue; }
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.MinusEq, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Minus, i)); i = i + 1; continue;
         }
         if (c == 42) {                                  // * *=
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.StarEq)); i = i + 2; continue; }
-            toks.push(tk(Tok.Star)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.StarEq, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Star, i)); i = i + 1; continue;
         }
         if (c == 47) {                                  // / /=  (// já tratado)
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.SlashEq)); i = i + 2; continue; }
-            toks.push(tk(Tok.Slash)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.SlashEq, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Slash, i)); i = i + 1; continue;
         }
         if (c == 37) {                                  // % %=
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.PercentEq)); i = i + 2; continue; }
-            toks.push(tk(Tok.Percent)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.PercentEq, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Percent, i)); i = i + 1; continue;
         }
         if (c == 60) {                                  // < << <=
-            if (at(src, i + 1, n) == 60) { toks.push(tk(Tok.Shl)); i = i + 2; continue; }
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.Le)); i = i + 2; continue; }
-            toks.push(tk(Tok.Lt)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 60) { toks.push(tk(Tok.Shl, i)); i = i + 2; continue; }
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.Le, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Lt, i)); i = i + 1; continue;
         }
         if (c == 62) {                                  // > >> >=
-            if (at(src, i + 1, n) == 62) { toks.push(tk(Tok.Shr)); i = i + 2; continue; }
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.Ge)); i = i + 2; continue; }
-            toks.push(tk(Tok.Gt)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 62) { toks.push(tk(Tok.Shr, i)); i = i + 2; continue; }
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.Ge, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Gt, i)); i = i + 1; continue;
         }
         if (c == 38) {                                  // & &&
-            if (at(src, i + 1, n) == 38) { toks.push(tk(Tok.AmpAmp)); i = i + 2; continue; }
-            toks.push(tk(Tok.Amp)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 38) { toks.push(tk(Tok.AmpAmp, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Amp, i)); i = i + 1; continue;
         }
         if (c == 124) {                                 // | ||
-            if (at(src, i + 1, n) == 124) { toks.push(tk(Tok.PipePipe)); i = i + 2; continue; }
-            toks.push(tk(Tok.Pipe)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 124) { toks.push(tk(Tok.PipePipe, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Pipe, i)); i = i + 1; continue;
         }
         if (c == 61) {                                  // = == =>
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.EqEq)); i = i + 2; continue; }
-            if (at(src, i + 1, n) == 62) { toks.push(tk(Tok.FatArrow)); i = i + 2; continue; }
-            toks.push(tk(Tok.Eq)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.EqEq, i)); i = i + 2; continue; }
+            if (at(src, i + 1, n) == 62) { toks.push(tk(Tok.FatArrow, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Eq, i)); i = i + 1; continue;
         }
         if (c == 33) {                                  // ! !=
-            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.Neq)); i = i + 2; continue; }
-            toks.push(tk(Tok.Bang)); i = i + 1; continue;
+            if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.Neq, i)); i = i + 2; continue; }
+            toks.push(tk(Tok.Bang, i)); i = i + 1; continue;
         }
 
         // byte desconhecido: pula (o compilador Rust dá erro aqui; aqui somos
@@ -296,6 +300,6 @@ fn lexSrc(src: string): Token[] {
         i = i + 1;
     }
 
-    toks.push(tk(Tok.Eof));
+    toks.push(tk(Tok.Eof, i));
     return toks;
 }
