@@ -1,9 +1,17 @@
 # lex registry — o site (escrito em lex)
 
-O registry de pacotes do lex como um **site HTTP escrito na própria linguagem**
-([`server.lex`](server.lex)) — dogfooding do servidor HTTP, do filesystem e do
-JSON do lex. Substitui (ou complementa) o índice git: os clientes publicam e
-resolvem pacotes pela API HTTP.
+O registry de pacotes do lex como um **site HTTP escrito na própria linguagem** —
+dogfooding do servidor HTTP, do filesystem e do JSON do lex. Substitui (ou
+complementa) o índice git: os clientes publicam e resolvem pacotes pela API HTTP.
+
+Organizado em módulos lex (`import { } from "./mod"`):
+
+| Arquivo | Responsabilidade |
+|---|---|
+| [`server.lex`](server.lex) | ponto de entrada: `main` + roteamento |
+| [`store.lex`](store.lex)   | config (`dataDir`/`port`) e helpers de dados (`pkgPath`/`safeName`) |
+| [`pages.lex`](pages.lex)   | renderização HTML (lista, busca, detalhe) |
+| [`api.lex`](api.lex)       | endpoints JSON (`/api/packages`, `/api/pkg`, publish) |
 
 ## Rotas
 

@@ -44,3 +44,6 @@ jobs:
 
       - name: Runner de testes do lex (em .test.lex)
         run: ./target/debug/lex test examples/tests
+
+      - name: Checa o registry-site (parser + sema dos módulos lex)
+        run: ./target/debug/lex check registry-site/server.lex
