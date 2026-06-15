@@ -41,15 +41,35 @@ fn resolve_module(spec: &str, base: &Path) -> Option<PathBuf> {
     }
     // especificador nu: std/ primeiro (builtins ganham), depois pacotes
     // instalados (lex_modules/), depois um .lex local ao lado do importador.
-    let std_p = Path::new("std").join(&file);
-    if std_p.exists() {
-        return Some(std_p);
+    if let Some(p) = find_std_file(&file, base) {
+        return Some(p);
     }
     if let Some(p) = resolve_package_entry(spec) {
         return Some(p);
     }
     let local = base.join(&file);
     if local.exists() { Some(local) } else { None }
+}
+
+/// Procura `std/<file>` da forma mais tolerante possível, para que o `lex`
+/// funcione de qualquer subdiretório do projeto (não só da raiz): tenta `std/`
+/// relativo ao CWD e depois SUBINDO pelos diretórios pais do CWD e do diretório
+/// do arquivo importador. O primeiro `std/<file>` encontrado vence (o mais
+/// próximo). Mantém o comportamento antigo (rodar da raiz) como caso rápido.
+fn find_std_file(file: &str, base: &Path) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.extend(cwd.ancestors().map(Path::to_path_buf));
+    }
+    let base_abs = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    roots.extend(base_abs.ancestors().map(Path::to_path_buf));
+    for root in roots {
+        let p = root.join("std").join(file);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// Resolve um pacote instalado (`import { } from "cores"`) para seu ponto de

@@ -28,8 +28,9 @@ Cada pacote é um arquivo `data/<nome>.json` = `{ name, repo, version, descripti
 ## Rodar local
 
 ```sh
-lex registry-site/server.lex -o registry   # compila (rode da raiz do repo: usa std/)
-./registry                                  # escuta em http://localhost:8080
+# de dentro de registry-site/ (o lex acha a std/ subindo os diretórios):
+lex server.lex -o registry        # ou:  lex server.lex --watch
+./registry                        # escuta em http://localhost:8080
 ```
 
 ## Conectar o `lex` ao site
