@@ -1,0 +1,9 @@
+# Aponta o llvm-sys (dependência do inkwell) para o LLVM 18 do Homebrew,
+# que é keg-only e não fica no PATH. Assim `cargo build` funciona direto.
+[env]
+LLVM_SYS_180_PREFIX = "/opt/homebrew/opt/llvm@18"
+
+# O LLVM 18 do Homebrew linka com zstd/libxml2, que ficam em /opt/homebrew/lib.
+# Adicionamos esse diretório ao path de busca do linker.
+[build]
+rustflags = ["-L", "/opt/homebrew/lib"]

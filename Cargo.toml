@@ -1,0 +1,19 @@
+[package]
+name = "lex-lang"
+version = "0.1.0"
+edition = "2021"
+description = "lex — uma linguagem de baixo nível compilada direto para LLVM IR"
+
+[[bin]]
+name = "lex"
+path = "src/main.rs"
+
+[dependencies]
+inkwell = { version = "0.5", features = ["llvm18-0"] }
+notify = "8"
+wasmi = "1.1.0"
+# gerenciador de pacotes (lex install/add/remove/update): manifesto+lockfile em
+# TOML, resolução de versões por semver. Rede é só via `git` (sem crate HTTP).
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+semver = "1"

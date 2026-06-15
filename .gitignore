@@ -1,0 +1,20 @@
+/target
+*.o
+*.wasm
+
+# binários compilados pelos exemplos — mantém os fontes .lex versionados
+/examples/*
+!/examples/*.lex
+!/examples/*/
+/hello
+
+# pacotes baixados pelo gerenciador (lex install) — o lex.lock é versionado
+/lex_modules
+**/lex_modules
+
+# extensão VS Code: dependências e bundle são gerados (build no vscode:prepublish)
+/editors/vscode-lex/node_modules
+/editors/vscode-lex/out
+
+# settings locais do Claude (por máquina)
+/.claude/settings.local.json

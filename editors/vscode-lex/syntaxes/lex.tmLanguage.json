@@ -1,0 +1,341 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "lex",
+  "scopeName": "source.lex",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#import-statement" },
+    { "include": "#function-definition" },
+    { "include": "#type-definition" },
+    { "include": "#class-definition" },
+    { "include": "#interface-definition" },
+    { "include": "#enum-definition" },
+    { "include": "#new-expression" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#type-name" },
+    { "include": "#declaration-name" },
+    { "include": "#method-call" },
+    { "include": "#member-access" },
+    { "include": "#function-call" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.lex",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.lex",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.lex", "match": "\\\\." }
+          ]
+        },
+        {
+          "comment": "template literal: o conteúdo é realçado como HTML (estilo lit-html), e ${...} como código lex",
+          "name": "string.template.lex",
+          "begin": "`",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.template.begin.lex" }
+          },
+          "end": "`",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.template.end.lex" }
+          },
+          "patterns": [
+            { "name": "constant.character.escape.lex", "match": "\\\\." },
+            { "include": "#template-substitution" },
+            { "include": "#template-html" }
+          ]
+        }
+      ]
+    },
+    "template-html": {
+      "comment": "HTML/JSX dentro de template literals: tag minúscula é HTML, Capitalizada é componente",
+      "patterns": [
+        { "include": "#html-comment" },
+        { "include": "#component-tag" },
+        { "include": "#html-tag" },
+        { "include": "#html-entity" }
+      ]
+    },
+    "html-comment": {
+      "name": "comment.block.html.lex",
+      "begin": "<!--",
+      "end": "-->"
+    },
+    "html-entity": {
+      "name": "constant.character.entity.html.lex",
+      "match": "&[a-zA-Z0-9#]+;"
+    },
+    "component-tag": {
+      "name": "meta.tag.component.lex",
+      "begin": "(</?)([A-Z][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.lex" },
+        "2": { "name": "support.class.component.lex" }
+      },
+      "end": "(/?>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.lex" }
+      },
+      "patterns": [{ "include": "#tag-attributes" }]
+    },
+    "html-tag": {
+      "name": "meta.tag.html.lex",
+      "begin": "(</?)([a-z][a-zA-Z0-9-]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.lex" },
+        "2": { "name": "entity.name.tag.html.lex" }
+      },
+      "end": "(/?>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.lex" }
+      },
+      "patterns": [{ "include": "#tag-attributes" }]
+    },
+    "tag-attributes": {
+      "patterns": [
+        { "include": "#template-substitution" },
+        {
+          "match": "([A-Za-z_][A-Za-z0-9_-]*)\\s*(=)",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.lex" },
+            "2": { "name": "punctuation.separator.key-value.lex" }
+          }
+        },
+        {
+          "comment": "atributo sem valor",
+          "match": "[A-Za-z_][A-Za-z0-9_-]*",
+          "name": "entity.other.attribute-name.lex"
+        },
+        {
+          "name": "string.quoted.double.html.lex",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.lex" }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.lex" }
+          },
+          "patterns": [{ "include": "#template-substitution" }]
+        },
+        {
+          "comment": "valor-expressão: pontos={42} — código lex embutido",
+          "name": "meta.embedded.expression.lex",
+          "begin": "\\{",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.embedded.begin.lex" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.embedded.end.lex" }
+          },
+          "patterns": [{ "include": "$self" }]
+        }
+      ]
+    },
+    "template-substitution": {
+      "name": "meta.template.expression.lex",
+      "begin": "\\$\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.template-expression.begin.lex" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.template-expression.end.lex" }
+      },
+      "patterns": [{ "include": "$self" }]
+    },
+    "function-definition": {
+      "match": "\\b(function|fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.function.lex" },
+        "2": { "name": "entity.name.function.lex" }
+      }
+    },
+    "import-statement": {
+      "comment": "import { a, b } from \"mod\" — realça os nomes importados",
+      "begin": "\\b(import)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.import.lex" },
+        "2": { "name": "punctuation.section.braces.lex" }
+      },
+      "end": "(\\})",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.braces.lex" }
+      },
+      "patterns": [
+        { "match": "[A-Za-z_][A-Za-z0-9_]*", "name": "variable.other.import.lex" },
+        { "match": ",", "name": "punctuation.separator.lex" }
+      ]
+    },
+    "type-definition": {
+      "comment": "type Nome = { ... }",
+      "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.lex" },
+        "2": { "name": "entity.name.type.lex" }
+      }
+    },
+    "class-definition": {
+      "comment": "class Nome extends Pai { ... }",
+      "match": "\\b(class)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s+(extends)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+      "captures": {
+        "1": { "name": "keyword.control.class.lex storage.type.class.lex" },
+        "2": { "name": "entity.name.type.class.lex entity.name.type.lex" },
+        "3": { "name": "keyword.control.extends.lex storage.modifier.extends.lex" },
+        "4": { "name": "entity.other.inherited-class.lex entity.name.type.lex" }
+      }
+    },
+    "interface-definition": {
+      "comment": "interface Nome { ... }",
+      "match": "\\b(interface)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.interface.lex storage.type.interface.lex" },
+        "2": { "name": "entity.name.type.interface.lex entity.name.type.lex" }
+      }
+    },
+    "enum-definition": {
+      "comment": "enum Nome { ... }",
+      "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.enum.lex storage.type.enum.lex" },
+        "2": { "name": "entity.name.type.enum.lex entity.name.type.lex" }
+      }
+    },
+    "new-expression": {
+      "comment": "new Classe(...)",
+      "match": "\\b(new)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.operator.new.lex" },
+        "2": { "name": "entity.name.type.class.lex entity.name.type.lex" }
+      }
+    },
+    "type-name": {
+      "comment": "identificador Capitalizado em posição de tipo (struct, Component) — não é chamada",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b(?!\\s*\\()",
+      "name": "entity.name.type.lex"
+    },
+    "method-call": {
+      "comment": "base.metodo(...) — chamada de método após ponto; nome recebe cor de função",
+      "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "punctuation.accessor.lex" },
+        "2": { "name": "entity.name.function.lex" }
+      }
+    },
+    "member-access": {
+      "comment": "base.campo — acesso a campo de struct",
+      "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.accessor.lex" },
+        "2": { "name": "variable.other.property.lex" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.lex",
+          "match": "\\b(return|if|else|while|for|of|break|continue|match|try|catch|fail|defer)\\b"
+        },
+        {
+          "name": "constant.language.boolean.lex",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "keyword.control.import.lex",
+          "match": "\\b(import|from|declare)\\b"
+        },
+        {
+          "name": "keyword.control.concurrency.lex",
+          "match": "\\b(spawn|async|await)\\b"
+        },
+        {
+          "name": "keyword.control.class.lex storage.type.class.lex",
+          "match": "\\b(class|extends|interface|implements)\\b"
+        },
+        {
+          "name": "keyword.operator.new.lex",
+          "match": "\\bnew\\b"
+        },
+        {
+          "name": "storage.modifier.lex",
+          "match": "\\b(private|static)\\b"
+        },
+        {
+          "name": "variable.language.lex",
+          "match": "\\b(this|super)\\b"
+        },
+        {
+          "name": "support.function.builtin.lex",
+          "match": "\\b(len|join|substring|indexOf|contains|startsWith|endsWith|toUpper|toLower|trim|strEq|charAt|charCode|parseInt|repeat|replace|concat|split|push|pop|slice|mapGet|mapSet|mapHas|keys|jsonParse|jsonStringify|jsonGet|jsonAt|jsonAsInt|jsonAsStr|jsonAsBool|jsonAsFloat|jsonEq|jsonTypeof|jsonIsNull|jsonNum|jsonFloat|jsonStr|jsonBool|jsonNull|jsonObject|jsonArray|jsonSet|jsonPush|str|sqrt|floor|ceil|round|fabs|sin|cos|tan|exp|ln|log10|pow|min|max|gget|gset|readFile|writeFile|appendFile|exists|isFile|isDir|fileSize|remove|rename|mkdir|rmdir|readDir|openFile|alloc|free|poke8|poke16|poke32|poke64|poke16be|poke32be|peek8|peek16|peek32|peek64|channel|send|recv|chanClose)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "storage.type.function.lex",
+          "match": "\\b(function|fn)\\b"
+        },
+        {
+          "name": "storage.type.lex",
+          "match": "\\b(const|let|type)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.lex",
+          "match": "\\b(i8|i32|i64|f64|f32|float|bool|ptr|void|string|Component|json|Json|Map|Channel|Future)\\b"
+        }
+      ]
+    },
+    "declaration-name": {
+      "comment": "nome ligado a um tipo: parâmetro ou variável (identificador antes de ':')",
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=:)",
+      "captures": {
+        "1": { "name": "variable.other.lex" }
+      }
+    },
+    "function-call": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.lex" }
+      }
+    },
+    "numbers": {
+      "name": "constant.numeric.integer.lex",
+      "match": "\\b[0-9]+\\b"
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.lex", "match": "=>" },
+        { "name": "keyword.operator.range.lex", "match": "\\.\\." },
+        { "name": "keyword.operator.logical.lex", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.comparison.lex", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.assignment.lex", "match": "(\\+|\\-|\\*|/|%)?=|\\+\\+|--" },
+        { "name": "keyword.operator.bitwise.lex", "match": "<<|>>|&|\\||\\^|~" },
+        { "name": "keyword.operator.arithmetic.lex", "match": "[+\\-*/%]" }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.separator.lex", "match": "[;,:]" },
+        { "name": "punctuation.section.braces.lex", "match": "[{}]" },
+        { "name": "punctuation.section.brackets.lex", "match": "[\\[\\]]" },
+        { "name": "punctuation.section.parens.lex", "match": "[()]" }
+      ]
+    }
+  }
+}
