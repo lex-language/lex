@@ -1,5 +1,7 @@
 # lex
 
+[![CI](https://github.com/lex-language/lex/actions/workflows/ci.yml/badge.svg)](https://github.com/lex-language/lex/actions/workflows/ci.yml)
+
 Uma linguagem de baixo nível com **sintaxe TypeScript-like** — e melhorias onde
 o TypeScript é fraco: tipos inteiros de verdade (`i32`/`i64`), erros checados
 em tempo de compilação e threads reais — compilada **direto para LLVM IR**,

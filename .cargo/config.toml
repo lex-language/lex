@@ -1,9 +1,13 @@
 # Aponta o llvm-sys (dependência do inkwell) para o LLVM 18 do Homebrew,
 # que é keg-only e não fica no PATH. Assim `cargo build` funciona direto.
+# `[env]` NÃO sobrescreve a variável quando ela já existe no ambiente (force
+# padrão = false), então o CI (Linux) define LLVM_SYS_180_PREFIX próprio e este
+# valor vale só como padrão no macOS local.
 [env]
 LLVM_SYS_180_PREFIX = "/opt/homebrew/opt/llvm@18"
 
 # O LLVM 18 do Homebrew linka com zstd/libxml2, que ficam em /opt/homebrew/lib.
-# Adicionamos esse diretório ao path de busca do linker.
-[build]
+# Adicionamos esse diretório ao path de busca do linker — SÓ no macOS (no Linux
+# do CI esse caminho não existe e as libs vêm dos pacotes -dev do sistema).
+[target.'cfg(target_os = "macos")']
 rustflags = ["-L", "/opt/homebrew/lib"]

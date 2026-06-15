@@ -202,9 +202,7 @@ fn sema_errors_carry_source_spans() {
     // erro no corpo: aponta o statement do arquivo analisado (module 0) com um
     // trecho real (hi > lo) — é o que o `lex lsp` usa para sublinhar a linha.
     let mut p1 = parse_program("fn main(): i32 {\n  const x: i64 = 1\n  x = 2\n  return 0\n}");
-    let diags = sema::check(&mut p1)
-        .err()
-        .expect("esperava erro de reatribuição de const");
+    let diags = sema::check(&mut p1).expect_err("esperava erro de reatribuição de const");
     let reassign = diags
         .iter()
         .find(|d| d.message.contains("cannot reassign"))
@@ -214,9 +212,7 @@ fn sema_errors_carry_source_spans() {
 
     // erro de definição: aponta o nome da função duplicada (não DUMMY)
     let mut p2 = parse_program("fn f(): i64 { return 0 }\nfn f(): i64 { return 1 }");
-    let dup = sema::check(&mut p2)
-        .err()
-        .expect("esperava função duplicada");
+    let dup = sema::check(&mut p2).expect_err("esperava função duplicada");
     let d = dup
         .iter()
         .find(|d| d.message.contains("defined more than once"))

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # llvm-sys (via inkwell) precisa do LLVM 18; no Linux ele vem dos pacotes do
+  # sistema. Esta env var sobrepõe o padrão de macOS do .cargo/config.toml.
+  LLVM_SYS_180_PREFIX: /usr/lib/llvm-18
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar LLVM 18, clang e libs do linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            llvm-18 llvm-18-dev llvm-18-tools clang-18 lld-18 libpolly-18-dev \
+            libzstd-dev zlib1g-dev libffi-dev libxml2-dev libedit-dev libncurses-dev
+          # o lex chama `clang`/`wasm-ld` puros no link nativo/wasm
+          sudo ln -sf /usr/bin/clang-18 /usr/local/bin/clang
+          sudo ln -sf /usr/lib/llvm-18/bin/wasm-ld /usr/local/bin/wasm-ld || true
+
+      - name: Componente clippy
+        run: rustup component add clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Clippy (sem warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Testes (unit + e2e)
+        run: cargo test --locked
+
+      - name: Runner de testes do lex (em .test.lex)
+        run: ./target/debug/lex test examples/tests
