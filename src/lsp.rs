@@ -20,10 +20,7 @@ use crate::json::{self, Json};
 pub fn run() -> ! {
     let mut stdin = std::io::stdin().lock();
     let mut counter: u64 = 0;
-    loop {
-        let Some(body) = read_message(&mut stdin) else {
-            break;
-        };
+    while let Some(body) = read_message(&mut stdin) {
         let Some(msg) = json::parse(&body) else {
             continue;
         };
