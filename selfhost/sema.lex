@@ -16,7 +16,7 @@ import { lexSrc, Tok } from "./lexer"
 import { Program, ClassDecl, ClassField, Func, EnumDecl, Parser } from "./parser"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call, ArrayLit,
-    Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm
+    Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm, Lambda
 } from "./parser"
 
 // ── tabela de classes ────────────────────────────────────────────────────────
@@ -248,10 +248,21 @@ fn mapValueTy(ty: string): string {
     if (isMapTy(ty)) { return substring(ty, 4, len(ty) - 1); }
     return "?";
 }
+// tipo de função contém "=>" (ex.: "()=>i64", "(i64)=>i64").
+fn isFunctionType(ty: string): bool {
+    const n: i64 = len(ty);
+    let i: i64 = 0;
+    while (i + 1 < n) {
+        if (peek8(ty, i) == 61 && peek8(ty, i + 1) == 62) { return true; }   // "=>"
+        i = i + 1;
+    }
+    return false;
+}
 fn isClassTy(ty: string): bool {
     if (isPrimTy(ty)) { return false; }
     if (isArrayTy(ty)) { return false; }
     if (isMapTy(ty)) { return false; }
+    if (isFunctionType(ty)) { return false; }
     return !strEq(ty, "");
 }
 
@@ -355,6 +366,7 @@ class Sema {
             Field fld => this.typeField(fld, scope),
             Index ix => this.typeIndex(ix, scope),
             Match mt => this.typeMatch(mt, scope),
+            Lambda lm => "()=>?",
             _ => "?"
         };
     }

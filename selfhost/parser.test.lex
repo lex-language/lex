@@ -174,3 +174,15 @@ describe("parser de módulo (F6.1)", () => {
             .toBe("(program (do (const x:i64 1) (. Terminal log x)))");
     });
 });
+
+describe("parser: arrow functions (Fase A)", () => {
+    test("arrow içada p/ __lambda_N e referenciada como (lambda …)", () => {
+        expect(parseModuleStr("fn main(): i64 { return apply(() => 42) }"))
+            .toBe("(program (fn main () i64 (do (return (call apply (lambda __lambda_0))))) (fn __lambda_0 () i64 (do (return 42))))");
+    });
+
+    test("tipo de função na anotação + arrow com parâmetro", () => {
+        expect(parseStmtStr("let f: (i64) => i64 = (x: i64) => x + 1"))
+            .toBe("(let f:(i64)=>i64 (lambda __lambda_0))");
+    });
+});

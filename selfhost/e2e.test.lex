@@ -152,4 +152,14 @@ describe("end-to-end: lex -> LLVM IR -> binário nativo -> roda", () => {
         writeFile("/tmp/lex_mod_main.lex", "import { Box } from \"./lex_mod_lib\"\nfn main(): i32 {\n  let b: Box = new Box(9)\n  return b.get()\n}");
         expect(compileFileAndRun("/tmp/lex_mod_main.lex", "mod")).toBe(9);
     });
+
+    test("arrow: passa arrow e chama indireto (apply(() => 42))", () => {
+        const src: string = "fn apply(f: () => i64): i64 { return f() }\nfn main(): i32 { return apply(() => 42) }";
+        expect(compileAndRun(src, "arrow0")).toBe(42);
+    });
+
+    test("arrow com parâmetro: applyTo((n) => n*2, 21) = 42", () => {
+        const src: string = "fn applyTo(f: (i64) => i64, x: i64): i64 { return f(x) }\nfn main(): i32 { return applyTo((n: i64) => n * 2, 21) }";
+        expect(compileAndRun(src, "arrow1")).toBe(42);
+    });
 });

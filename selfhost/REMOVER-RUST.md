@@ -18,9 +18,16 @@ As fases abaixo estão em **ordem de dependência**. Esforço é relativo (S/M/L
 
 ---
 
-## Fase A — Arrow functions / closures  ·  esforço: L
+## Fase A — Arrow functions / closures  ·  esforço: L  ·  ✅ FEITO (não-capturante)
 **Por quê:** bloqueia o `lex test` (o harness `std/test.lex` usa `test("…", () => {…})`)
 e é a maior lacuna de linguagem do compilador self-hosted.
+
+> **FEITO**: arrow não-capturante. Parser iça p/ `__lambda_N` (`Lambda` node, campos
+> `lambdas`/`lambdaN` no Parser, anexados a `funcs` em `parseModule`); `parseTypeStr`
+> lê `(T,…)=>R`. Sema: `typeOf(Lambda)="()=>?"` + `isFunctionType`. Codegen: `Lambda`→
+> `ptrtoint (ptr @__lambda_N to i64)`; chamada de var de tipo função → call indireto
+> (`inttoptr`+`call i64 %fp(...)`). e2e: `apply(() => 42)`→42, `applyTo((n)=>n*2,21)`→42.
+> Bootstrap segue em ponto-fixo. FALTA (se algum alvo exigir): **captura** de locais.
 
 - **Parser** (`parser.lex`): em `parsePrimary`, no caso `LParen`, fazer lookahead
   (`()` ou `(ident:` ou `(ident,`) → é arrow. Parsear params + `: ret` opcional +

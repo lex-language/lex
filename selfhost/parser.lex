@@ -114,6 +114,12 @@ class Match extends Expr {
     arms: MatchArm[]
     constructor(subject: Expr, arms: MatchArm[]) { this.subject = subject; this.arms = arms }
 }
+// arrow function (não-capturante): içada p/ uma função de topo `__lambda_N`; a
+// expressão avalia para o ponteiro dessa função.
+class Lambda extends Expr {
+    fnName: string
+    constructor(fnName: string) { this.fnName = fnName }
+}
 
 // ── AST: statements e declarações ────────────────────────────────────────────
 class Stmt {}
@@ -258,9 +264,13 @@ fn prec(k: Tok): i64 {
 class Parser {
     toks: Token[]
     pos: i64
+    lambdas: Func[]    // arrow functions içadas (anexadas a `funcs` em parseModule)
+    lambdaN: i64
     constructor(toks: Token[]) {
         this.toks = toks
         this.pos = 0
+        this.lambdas = []
+        this.lambdaN = 0
     }
 
     // índice do próximo token que NÃO é quebra de linha (newlines são invisíveis)
@@ -379,6 +389,11 @@ class Parser {
         if (k == Tok.False) { return new BoolLit(false); }
         if (k == Tok.Str) { return new StrLit(t.text); }
         if (k == Tok.LParen) {
+            // arrow function?  `() =>`  ou  `(ident: T, …) =>`
+            if (this.peekKind() == Tok.RParen
+                || (this.peekKind() == Tok.Ident && this.peekToken(1).kind == Tok.Colon)) {
+                return this.parseLambda();
+            }
             const e: Expr = this.parseExpr();
             this.expect(Tok.RParen);
             return e;
@@ -521,10 +536,54 @@ class Parser {
         return new Template(parts);
     }
 
+    // arrow function `(p: T, …)[: R] => corpo` — o `(` já saiu. Içada p/ uma
+    // função de topo `__lambda_N`; devolve um Lambda com o nome içado.
+    parseLambda(): Expr {
+        let params: Param[] = [];
+        while (this.peekKind() != Tok.RParen && this.peekKind() != Tok.Eof) {
+            const pname: string = this.advance().text;
+            let pty: string = "";
+            if (this.peekKind() == Tok.Colon) { this.advance(); pty = this.parseTypeStr(); }
+            if (this.peekKind() == Tok.Eq) { this.advance(); this.parseExpr(); }   // default descartado
+            params.push(new Param(pname, pty));
+            if (this.peekKind() == Tok.Comma) { this.advance(); }
+        }
+        this.expect(Tok.RParen);
+        let ret: string = "i64";                       // arrow sem anotação assume i64
+        if (this.peekKind() == Tok.Colon) { this.advance(); ret = this.parseTypeStr(); }
+        this.expect(Tok.FatArrow);
+        let body: Stmt[] = [];
+        if (this.peekKind() == Tok.LBrace) { body = this.parseBlock(); }
+        else { body = [new ReturnStmt(true, this.parseExpr())]; }    // corpo-expr → return
+        const name: string = concat("__lambda_", str(this.lambdaN));
+        this.lambdaN = this.lambdaN + 1;
+        this.lambdas.push(new Func(name, params, ret, false, body));
+        return new Lambda(name);
+    }
+
     // ── tipos (forma textual, suficiente p/ a AST do PoC) ─────────────────────
     // base, genéricos de 1 nível `Map<i64>` e arrays `T[]`. Genéricos aninhados
     // (`Map<Map<i64>>`, fecham com `>>`) ficam de TODO.
     parseTypeStr(): string {
+        // tipo de função: `(T, …) => R`  →  "(T,…)=>R"
+        if (this.peekKind() == Tok.LParen) {
+            this.advance();
+            let f: string = "(";
+            let first: bool = true;
+            while (this.peekKind() != Tok.RParen && this.peekKind() != Tok.Eof) {
+                if (!first) { f = concat(f, ","); }
+                f = concat(f, this.parseTypeStr());
+                first = false;
+                if (this.peekKind() == Tok.Comma) { this.advance(); }
+            }
+            this.expect(Tok.RParen);
+            f = concat(f, ")");
+            if (this.peekKind() == Tok.FatArrow) {
+                this.advance();
+                f = concat(concat(f, "=>"), this.parseTypeStr());
+            }
+            return f;
+        }
         let s: string = this.advance().text;        // nome base (Ident)
         if (this.peekKind() == Tok.Lt) {
             this.advance();
@@ -816,6 +875,7 @@ class Parser {
             }
             else { main.push(this.parseStmt()); }   // statement de topo (script-mode)
         }
+        for (const lm of this.lambdas) { funcs.push(lm); }   // arrow functions içadas
         return new Program(imports, enums, classes, funcs, main);
     }
 
@@ -926,6 +986,7 @@ fn printExpr(e: Expr): string {
         Template tp => printTpl(tp),
         MapLit ml => printMap(ml),
         StructLit sl => printStruct(sl),
+        Lambda lm => `(lambda ${lm.fnName})`,
         _ => "?"
     };
 }

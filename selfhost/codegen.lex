@@ -23,11 +23,11 @@
 import { lexSrc, Tok } from "./lexer"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call,
-    ArrayLit, Field, MethodCall, Index, MapLit, Template, Match,
+    ArrayLit, Field, MethodCall, Index, MapLit, Template, Match, Lambda,
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, Func, Param, Program, Parser
 } from "./parser"
-import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, elementTy } from "./sema"
+import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, elementTy } from "./sema"
 
 fn boolLit(b: bool): string {
     if (b) { return "1"; }
@@ -348,6 +348,15 @@ class Codegen {
     }
 
     genCall(c: Call): string {
+        // chamada INDIRETA: c.name é uma variável de tipo função (arrow recebido)
+        if (isFunctionType(this.scope.get(c.name))) {
+            const fp: string = this.genLoad(c.name);
+            const fpp: string = this.newTmp();
+            this.emit(`  ${fpp} = inttoptr i64 ${fp} to ptr`);
+            const t: string = this.newTmp();
+            this.emit(`  ${t} = call i64 ${fpp}(${this.argList(c.args)})`);
+            return t;
+        }
         // print(x): imprime um i64 via printf da libc (saída de verdade).
         if (strEq(c.name, "print")) {
             let v: string = "0";
@@ -514,6 +523,7 @@ class Codegen {
             NewExpr ne => this.genNew(ne),
             Field f => this.genField(f),
             Match mt => this.genMatch(mt),
+            Lambda lm => `ptrtoint (ptr @${lm.fnName} to i64)`,
             _ => "0"
         };
     }
