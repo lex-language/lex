@@ -105,12 +105,13 @@ fn diagsToLsp(arr: Json): string {
     }
     return s;
 }
-// roda `lex check --json` no texto e publica os diagnósticos sob uri.
+// roda o `lexcheck` (self-hostado) no texto e publica os diagnósticos sob uri.
+// (Antes chamava o `lex check --json` do Rust; agora a análise é toda em lex.)
 fn analyzeAndPublish(uri: string, text: string) {
     const tmp: string = "/tmp/lex_lsp_doc.lex";
     const outf: string = "/tmp/lex_lsp_out.json";
     writeFile(tmp, text);
-    system(`lex check --json ${tmp} > ${outf} 2>/dev/null`);
+    system(`lexcheck ${tmp} > ${outf} 2>/dev/null`);
     const arr: Json = jParse(lspTrim(readFile(outf)));
     const diags: string = diagsToLsp(arr);
     lspSend(`{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"${jEscape(uri)}","diagnostics":[${diags}]}}`);

@@ -5,11 +5,15 @@
 //   lex build <arquivo.lex> [-o saida]   compila → binário nativo (linka runtime.c)
 //   lex run <arquivo.lex>                 compila p/ temp e executa (devolve exit)
 //   lex fmt [--check] <arquivos.lex>      formata (in-place) ou confere
+//   lex test <arquivos.test.lex>...       roda as suítes via o harness
+//   lex check [--json] <arquivos.lex>...  diagnósticos (variável indefinida) em JSON
 //   lex version                           versão
 //
-// (check/test/lsp/pkg/wasm ainda são binários/ferramentas à parte — ver README.)
+// (lsp/pkg/wasm ainda são binários à parte — ver README/REMOVER-RUST.md.)
 import { compileFileToIR } from "./modloader"
 import { formatSource } from "./fmt"
+import { runTestFile } from "./testrunner"
+import { runCheck } from "./checker"
 
 fn hasSuffix(s: string, suf: string): bool {
     const sl: i64 = len(s);
@@ -76,6 +80,35 @@ fn cmdFmt(av: string[]): i64 {
     return 0;
 }
 
+// lex test <arquivos.test.lex>... — roda cada suíte via o harness (lextest).
+fn cmdTest(av: string[]): i64 {
+    let failed: i64 = 0;
+    let i: i64 = 2;
+    while (i < av.len()) {
+        const f: string = av[i];
+        Terminal.log(concat("── ", f));
+        if (runTestFile(f) != 0) { failed = failed + 1; }
+        i = i + 1;
+    }
+    if (failed == 0) { Terminal.log("✓ tudo passou"); }
+    return failed;
+}
+
+// lex check [--json] <arquivos.lex>... — diagnósticos (variável indefinida) em JSON.
+fn cmdCheck(av: string[]): i64 {
+    let bad: i64 = 0;
+    let i: i64 = 2;
+    while (i < av.len()) {
+        const path: string = av[i];
+        if (strEq(path, "--json")) { i = i + 1; }       // sempre JSON; ignora a flag
+        else {
+            if (runCheck(path) != 0) { bad = 1; }
+            i = i + 1;
+        }
+    }
+    return bad;
+}
+
 // ── despacho (script-mode → main) ────────────────────────────────────────────
 const av: string[] = args();
 if (av.len() < 2) {
@@ -88,5 +121,7 @@ if (strEq(cmd, "version") || strEq(cmd, "--version")) { Terminal.log("lex (self-
 else if (strEq(cmd, "build") || strEq(cmd, "compile")) { rc = cmdBuild(av); }
 else if (strEq(cmd, "run")) { rc = cmdRun(av); }
 else if (strEq(cmd, "fmt")) { rc = cmdFmt(av); }
+else if (strEq(cmd, "test")) { rc = cmdTest(av); }
+else if (strEq(cmd, "check")) { rc = cmdCheck(av); }
 else { Terminal.log(`lex: comando desconhecido '${cmd}'`); rc = 1; }
 return rc;

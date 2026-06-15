@@ -145,7 +145,16 @@ dependência, a sema-em-lex precisa emitir diagnósticos.
 - **Validar:** `lex check --json` em arquivos com erro conhecido bate (linha/col/
   msg) com o do Rust, caso a caso.
 
-## Fase F — CLI completo (`lex` de produção em lex)  ·  esforço: L  (estende `lexcli.lex`)
+## Fase F — CLI completo (`lex` de produção em lex)  ·  esforço: L  ·  🟡 NÚCLEO FEITO
+> **NÚCLEO FEITO**: o `lexcli.lex` agora despacha **build/run/fmt/test/check/version**
+> num único binário (importando `runTestFile` de `testrunner.lex` e `runCheck` de
+> `checker.lex` — módulos só-declaração; os drivers `lextest`/`lexcheck` ficaram
+> finos). *Smoke*: `lex test <suíte>` ✓, `lex check --json` ✓, `lex run/build/fmt`.
+> O **`lexlsp` agora chama o `lexcheck`** (não mais o `lex check` do Rust) → o LSP
+> roda sem Rust (smoke: didOpen→publishDiagnostics da variável indefinida).
+> **FALTA**: `lsp`/`pkg`/wasm no despacho unificado; flags do `main.rs`; resolução
+> de `std/` subindo diretórios (hoje caminhos relativos à raiz do repo); `--watch`.
+
 - Espelhar `src/main.rs`: flags, `--target`, `-o`, resolução de `std/` (subir
   diretórios achando `std/` — já existe no Rust, portar a `resolve_module`/
   `find_std_file`), modos (`run`/`build`/`check`/`test`/`fmt`/`lsp`/`pkg`),
