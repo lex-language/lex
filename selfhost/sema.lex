@@ -13,7 +13,7 @@
 // Ainda NÃO faz inferência de tipos por expressão (próximo passo da F6.2);
 // aqui é só o esqueleto de nomes/layout que o codegen de classes (F6.4) exige.
 import { lexSrc, Tok } from "./lexer"
-import { Program, ClassDecl, ClassField, Func, EnumDecl, Parser } from "./parser"
+import { Program, ClassDecl, ClassField, Func, Param, EnumDecl, Parser } from "./parser"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call, ArrayLit,
     Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm, Lambda
@@ -228,7 +228,7 @@ fn semaEnumValue(src: string, enumName: string, variant: string): i64 {
 
 fn isPrimTy(ty: string): bool {
     return strEq(ty, "i64") || strEq(ty, "f64") || strEq(ty, "bool")
-        || strEq(ty, "string") || strEq(ty, "void") || strEq(ty, "?");
+        || strEq(ty, "string") || strEq(ty, "void") || strEq(ty, "?") || strEq(ty, "any");
 }
 fn isArrayTy(ty: string): bool {
     const n: i64 = len(ty);
@@ -314,12 +314,14 @@ class Scope {
 class Sema {
     classes: ClassTable
     enums: EnumTable
+    funcs: Func[]
     funcNames: string[]
     funcRets: string[]
     constructor(prog: Program) {
         this.classes = new ClassTable(prog.classes);
         this.classes.build();
         this.enums = new EnumTable(prog.enums);
+        this.funcs = prog.funcs;
         this.funcNames = [];
         this.funcRets = [];
         for (const f of prog.funcs) {
@@ -335,6 +337,36 @@ class Sema {
             i = i + 1;
         }
         return "?";
+    }
+
+    // tipos dos parâmetros de uma função de topo (vazio se não achar).
+    funcParamTypes(name: string): string[] {
+        for (const f of this.funcs) {
+            if (strEq(f.name, name)) {
+                let out: string[] = [];
+                for (const p of f.params) { out.push(p.ty); }
+                return out;
+            }
+        }
+        let empty: string[] = [];
+        return empty;
+    }
+    // tipos dos parâmetros de um método (ou constructor) de classe.
+    methodParamTypes(cls: string, method: string): string[] {
+        let empty: string[] = [];
+        if (this.classes.findInfo(cls) < 0) { return empty; }
+        const owner: string = this.classes.methodOwner(cls, method);
+        const di: i64 = this.classes.indexOfDecl(owner);
+        if (di < 0) { return empty; }
+        const decl: ClassDecl = this.classes.decls[di];
+        for (const f of decl.methods) {
+            if (strEq(f.name, method)) {
+                let out: string[] = [];
+                for (const p of f.params) { out.push(p.ty); }
+                return out;
+            }
+        }
+        return empty;
     }
 
     // retorno de um método de classe (resolve dono via tabela de classes), ou "?".

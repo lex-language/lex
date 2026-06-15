@@ -106,9 +106,9 @@ lex selfhost/lexi.lex -o /tmp/lexi
 
 Compilador-core **BOOTSTRAPADO** ✅ — front-end + sema estrutural + codegen
 completo + loader de módulos + fmt + TOML/semver + pkg(manifesto) + JSON + diag
-+ **LSP** + **`lex` unificado** (`lexcli`) + **arrow functions** (Fase A) em lex:
-~4600 linhas, **304 asserções verdes** + ponto-fixo de self-hosting
-(`bootstrap.sh`) + smokes (lexpkg, lexlsp, lexcli). Três caminhos:
++ **LSP** + **`lex` unificado** (`lexcli`) + **arrow functions** (Fase A) + **`any`/
+boxing** (Fase B) em lex: ~4700 linhas, **306 asserções verdes** + ponto-fixo de
+self-hosting (`bootstrap.sh`) + smokes (lexpkg, lexlsp, lexcli). Três caminhos:
 - **Self-hosting** — `lexc` (em lex) compila `selfhost/lexc.lex` (a si mesmo) e o
   IR é estável entre estágios (`lexc1.ll == lexc2.ll`). O Rust não é mais
   necessário pra buildar o compilador-core.

@@ -162,4 +162,14 @@ describe("end-to-end: lex -> LLVM IR -> binário nativo -> roda", () => {
         const src: string = "fn applyTo(f: (i64) => i64, x: i64): i64 { return f(x) }\nfn main(): i32 { return applyTo((n: i64) => n * 2, 21) }";
         expect(compileAndRun(src, "arrow1")).toBe(42);
     });
+
+    test("any/boxing: jsonEq compara por valor (int + string)", () => {
+        const src: string = "fn check(a: any, b: any): i64 { if (jsonEq(a, b)) { return 1 } return 0 }\nfn main(): i32 { return check(42, 42) * 100 + check(1, 2) * 10 + check(\"x\", \"x\") }";
+        expect(compileAndRun(src, "anybox")).toBe(101);
+    });
+
+    test("any em campo+método de classe (padrão do expect/toBe)", () => {
+        const src: string = "class Box2 {\n  v: any\n  constructor(a: any) { this.v = a }\n  same(w: any): i64 { if (jsonEq(this.v, w)) { return 1 } return 0 }\n}\nfn main(): i32 {\n  let b: Box2 = new Box2(7)\n  return b.same(7) * 10 + b.same(8)\n}";
+        expect(compileAndRun(src, "anyfield")).toBe(10);
+    });
 });

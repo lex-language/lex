@@ -49,9 +49,17 @@ e é a maior lacuna de linguagem do compilador self-hosted.
 - **Validar:** e2e — `fn apply(f: () => i64): i64 { return f() }` +
   `apply(() => 42)` → 42; passar arrow a uma função e chamar.
 
-## Fase B — Tipo `any` + boxing  ·  esforço: L
+## Fase B — Tipo `any` + boxing  ·  esforço: L  ·  ✅ FEITO (escalares + string)
 **Por quê:** `expect(actual: any)` embrulha qualquer valor com a **tag de tipo**
 pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
+
+> **FEITO**: reusa o `LexJson` do runtime. No ponto onde um valor concreto encontra
+> um parâmetro/campo `any`, o codegen BOXA: i64→`__lex_json_num`, f64→`__lex_json_float`,
+> string→`__lex_json_str`, bool→`__lex_json_bool` (`any`→`any` não re-boxa). Sema:
+> `funcParamTypes`/`methodParamTypes` + `any` é primitivo. Builtins json no codegen:
+> `jsonEq`/`jsonAsInt`/`jsonAsFloat`/`jsonNum`/… → `__lex_json_*`. e2e: `jsonEq` por
+> valor (int/string) e o padrão campo-`any`+método-`any` (espelho do `expect`/`toBe`).
+> FALTA p/ arrays/maps em `any` (gotcha conhecido: só literais estruturam).
 
 - **Codegen** (`codegen.lex`): ao passar um valor para um parâmetro `any`, **box**:
   alocar `{tag, payload}` (ou usar o `LexJson` do runtime, que já é tag+payload —
@@ -67,7 +75,11 @@ pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
 ## Fase C — `lex test` (driver + harness)  ·  esforço: M  (depende de A, B)
 - O harness JÁ existe (`std/test.lex`: `describe/test/it/expect/testReport`,
   placar em slots globais `gget/gset`). Com A+B, o compilador self-hosted passa a
-  compilá-lo.
+  compilá-lo — **MAS falta ainda** os métodos VARIÁDICOS do `Terminal`
+  (`Terminal.error/success/info(..., any, ...)`) que o harness usa pra imprimir o
+  placar e as falhas. Hoje o codegen self-hosted só trata `Terminal.log` (1 arg).
+  Logo Fase C = (a) métodos variádicos + impressão de `any` no `Terminal`,
+  (b) o driver `lextest` (acha `.test.lex`, injeta o import do harness).
 - **Driver** (`lextest.lex`, novo): `lex test <dir>` → `readDir`, filtra `*.test.lex`,
   e para cada arquivo: injeta `import { describe, test, expect, testReport } from
   "test"` + sintetiza um `main` que roda os `describe` de topo e retorna

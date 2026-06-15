@@ -77,6 +77,16 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "args")) { return "__lex_args"; }
     if (strEq(name, "mapGet")) { return "__lex_map_get"; }
     if (strEq(name, "mapSet")) { return "__lex_map_set"; }
+    // json / any (boxing comparado por valor)
+    if (strEq(name, "jsonEq")) { return "__lex_json_eq"; }
+    if (strEq(name, "jsonAsInt")) { return "__lex_json_as_int"; }
+    if (strEq(name, "jsonAsFloat")) { return "__lex_json_as_float"; }
+    if (strEq(name, "jsonAsStr")) { return "__lex_json_as_str"; }
+    if (strEq(name, "jsonStringify")) { return "__lex_json_stringify"; }
+    if (strEq(name, "jsonNum")) { return "__lex_json_num"; }
+    if (strEq(name, "jsonStr")) { return "__lex_json_str"; }
+    if (strEq(name, "jsonFloat")) { return "__lex_json_float"; }
+    if (strEq(name, "jsonBool")) { return "__lex_json_bool"; }
     return "";
 }
 
@@ -322,6 +332,35 @@ class Codegen {
         return this.emitCall(rfn, this.argList(args));
     }
 
+    // gera um arg; se o parâmetro é `any` e o valor é concreto, BOX num LexJson
+    // do runtime (tag+payload) — assim `jsonEq` compara por valor (int/str/float).
+    boxArg(a: Expr, paramTy: string): string {
+        const v: string = this.genExpr(a);
+        if (!strEq(paramTy, "any")) { return v; }
+        const at: string = this.sema.typeOf(a, this.scope);
+        if (strEq(at, "any")) { return v; }                                  // já é any
+        if (strEq(at, "string")) { return this.emitCall("__lex_json_str", concat("i64 ", v)); }
+        if (strEq(at, "f64")) { return this.emitCall("__lex_json_float", concat("i64 ", v)); }
+        if (strEq(at, "bool")) { return this.emitCall("__lex_json_bool", concat("i64 ", v)); }
+        if (strEq(at, "i64")) { return this.emitCall("__lex_json_num", concat("i64 ", v)); }
+        return v;                                                            // classe/array/map: best-effort sem box
+    }
+    // lista de args com boxing por tipo de parâmetro (ptypes[i]); "" = sem box.
+    argListBoxed(args: Expr[], ptypes: string[]): string {
+        let s: string = "";
+        let first: bool = true;
+        let i: i64 = 0;
+        for (const a of args) {
+            let pt: string = "";
+            if (i < ptypes.len()) { pt = ptypes[i]; }
+            if (!first) { s = concat(s, ", "); }
+            s = concat(s, concat("i64 ", this.boxArg(a, pt)));
+            first = false;
+            i = i + 1;
+        }
+        return s;
+    }
+
     // len(x): strlen / arr_len / map_len conforme o tipo de x.
     genLen(c: Call): string {
         const ty: string = this.sema.typeOf(c.args[0], this.scope);
@@ -367,8 +406,8 @@ class Codegen {
         if (strEq(c.name, "len")) { return this.genLen(c); }
         const rt: string = runtimeFn(c.name);
         if (!strEq(rt, "")) { return this.callRuntime(rt, c.args); }
-        // chamada a função do usuário
-        return this.emitCall(c.name, this.argList(c.args));
+        // chamada a função do usuário (boxando args `any`)
+        return this.emitCall(c.name, this.argListBoxed(c.args, this.sema.funcParamTypes(c.name)));
     }
 
     // chamadas de método: Terminal.log e (Stage B/C) coleções; resto → F6.4.
@@ -397,9 +436,14 @@ class Codegen {
         if (isClassTy(baseTy) && this.sema.classes.findInfo(baseTy) >= 0) {
             const owner: string = this.sema.classes.methodOwner(baseTy, m.method);
             if (!strEq(owner, "")) {
+                const ptypes: string[] = this.sema.methodParamTypes(baseTy, m.method);
                 let argStr: string = concat("i64 ", bv);
+                let i: i64 = 0;
                 for (const a of m.args) {
-                    argStr = concat(argStr, concat(", i64 ", this.genExpr(a)));
+                    let pt: string = "";
+                    if (i < ptypes.len()) { pt = ptypes[i]; }
+                    argStr = concat(argStr, concat(", i64 ", this.boxArg(a, pt)));
+                    i = i + 1;
                 }
                 return this.emitCall(concat(owner, concat(".", m.method)), argStr);
             }
@@ -481,7 +525,7 @@ class Codegen {
         const baseTy: string = this.sema.typeOf(f.base, this.scope);
         const b: string = this.genExpr(f.base);
         const slot: i64 = this.sema.classes.fieldSlot(baseTy, f.field);
-        const v: string = this.genExpr(valExpr);
+        const v: string = this.boxArg(valExpr, this.sema.classes.fieldType(baseTy, f.field));  // boxa se o campo é `any`
         const addr: string = this.slotAddr(b, slot);
         this.emit(`  store i64 ${v}, ptr ${addr}`);
         return 0;
@@ -496,9 +540,14 @@ class Codegen {
         this.emit(`  store i64 ${ci.tag}, ptr ${p}`);
         const owner: string = this.sema.classes.methodOwner(ne.cls, "constructor");
         if (!strEq(owner, "")) {
+            const ptypes: string[] = this.sema.methodParamTypes(ne.cls, "constructor");
             let argStr: string = concat("i64 ", obj);
+            let i: i64 = 0;
             for (const a of ne.args) {
-                argStr = concat(argStr, concat(", i64 ", this.genExpr(a)));
+                let pt: string = "";
+                if (i < ptypes.len()) { pt = ptypes[i]; }
+                argStr = concat(argStr, concat(", i64 ", this.boxArg(a, pt)));
+                i = i + 1;
             }
             this.emitCall(concat(owner, ".constructor"), argStr);
         }
@@ -890,6 +939,15 @@ class Codegen {
         this.raw("declare i64 @__lex_fs_write(i64, i64)");
         this.raw("declare i64 @__lex_system(i64)");
         this.raw("declare i64 @__lex_args()");
+        this.raw("declare i64 @__lex_json_num(i64)");
+        this.raw("declare i64 @__lex_json_float(i64)");
+        this.raw("declare i64 @__lex_json_str(i64)");
+        this.raw("declare i64 @__lex_json_bool(i64)");
+        this.raw("declare i64 @__lex_json_eq(i64, i64)");
+        this.raw("declare i64 @__lex_json_as_int(i64)");
+        this.raw("declare i64 @__lex_json_as_float(i64)");
+        this.raw("declare i64 @__lex_json_as_str(i64)");
+        this.raw("declare i64 @__lex_json_stringify(i64)");
         this.raw("");
         // métodos de classe (dispatch estático): @Classe.metodo(i64 %this, …)
         for (const c of prog.classes) {
