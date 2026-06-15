@@ -36,6 +36,12 @@ pub const MODULES_DIR: &str = "lex_modules";
 /// Repo git do índice do registry (nome -> URL). Sobrescrevível por LEX_REGISTRY.
 const DEFAULT_REGISTRY: &str = "https://github.com/lex-language/registry";
 
+/// URL base do registry como SITE (API HTTP em lex; ver registry-site/). Quando
+/// definida (aqui ou via `LEX_REGISTRY_API`), `lex add`/`lex publish` falam com
+/// a API JSON (`GET /api/pkg/<nome>`, `POST /api/publish`) em vez do índice git.
+/// Vazio = usa o índice git acima. Preencher quando o site estiver hospedado.
+const DEFAULT_REGISTRY_API: &str = "";
+
 // ===========================================================================
 // Manifesto (lex.toml)
 // ===========================================================================
@@ -593,8 +599,67 @@ fn prune_orphans(manifest: &Manifest, lock: &mut Lockfile) {
 // Registry (índice em ~/.lex/registry)
 // ===========================================================================
 
-/// Resolve um nome do registry para a URL git do repo, via índice clonado.
+/// URL base do registry-site (API HTTP), se configurada. `LEX_REGISTRY_API` tem
+/// prioridade; senão usa `DEFAULT_REGISTRY_API` (se não-vazio). `None` = modo
+/// índice git. A barra final é removida para concatenar caminhos com `/api/...`.
+fn registry_api() -> Option<String> {
+    let raw = std::env::var("LEX_REGISTRY_API")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_REGISTRY_API.to_string());
+    let raw = raw.trim().trim_end_matches('/').to_string();
+    if raw.is_empty() { None } else { Some(raw) }
+}
+
+/// `curl` GET (rede via processo externo, como o `git`). `-f` falha em 4xx/5xx.
+fn curl_get(url: &str) -> Result<String, String> {
+    let out = Command::new("curl")
+        .args(["-fsSL", url])
+        .output()
+        .map_err(|e| format!("could not run curl ({}). is curl installed?", e))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!(
+            "GET {} failed: {}",
+            url,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// `curl` POST de um corpo JSON para `url`.
+fn curl_post_json(url: &str, body: &str) -> Result<String, String> {
+    let out = Command::new("curl")
+        .args([
+            "-fsSL",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "--data-binary",
+            body,
+            url,
+        ])
+        .output()
+        .map_err(|e| format!("could not run curl ({}). is curl installed?", e))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!(
+            "POST {} failed: {}",
+            url,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// Resolve um nome do registry para a URL git do repo. Pelo SITE (API HTTP) se
+/// `registry_api()` estiver configurado; senão pelo índice git clonado.
 fn registry_lookup(name: &str) -> String {
+    if let Some(api) = registry_api() {
+        return registry_lookup_http(&api, name);
+    }
     let index = ensure_registry();
     // o índice expõe packages/<nome>.toml com { repo = "..." }
     let entry = index.join("packages").join(format!("{}.toml", name));
@@ -612,6 +677,25 @@ fn registry_lookup(name: &str) -> String {
     }
     let parsed: Entry = toml::from_str(&text)
         .unwrap_or_else(|e| fail(&format!("malformed registry entry for '{}': {}", name, e)));
+    normalize_git_url(&parsed.repo)
+}
+
+/// Resolve um nome pela API do registry-site: `GET {api}/api/pkg/<nome>` →
+/// JSON `{ repo, ... }` → URL git do pacote (que o resto baixa por tags).
+fn registry_lookup_http(api: &str, name: &str) -> String {
+    let url = format!("{}/api/pkg/{}", api, name);
+    let body = curl_get(&url).unwrap_or_else(|e| {
+        fail(&format!(
+            "package '{}' not found in the registry at {}\n  ({})\n  tip: install by git URL instead: lex add github.com/user/{}",
+            name, api, e, name
+        ))
+    });
+    #[derive(Deserialize)]
+    struct Entry {
+        repo: String,
+    }
+    let parsed: Entry = serde_json::from_str(&body)
+        .unwrap_or_else(|e| fail(&format!("malformed registry response for '{}': {}", name, e)));
     normalize_git_url(&parsed.repo)
 }
 
@@ -718,6 +802,35 @@ fn cmd_publish(args: &[String]) {
         .unwrap_or_else(|| {
             fail("no repo URL: pass it (lex publish <url>) or set a git 'origin' remote")
         });
+
+    // registry como SITE: faz POST do pacote para a API (em lex). O token, se
+    // o servidor exigir, vem de LEX_REGISTRY_TOKEN.
+    if let Some(api) = registry_api() {
+        let mut obj = serde_json::json!({
+            "name": m.package.name,
+            "version": m.package.version,
+            "repo": url,
+            "description": m.package.description.clone().unwrap_or_default(),
+        });
+        if let Ok(tok) = std::env::var("LEX_REGISTRY_TOKEN") {
+            if !tok.trim().is_empty() {
+                obj["token"] = serde_json::Value::String(tok);
+            }
+        }
+        let endpoint = format!("{}/api/publish", api);
+        curl_post_json(&endpoint, &obj.to_string())
+            .unwrap_or_else(|e| fail(&format!("publish failed: {}", e)));
+        println!(
+            "{}",
+            diag::ok_line(&format!(
+                "published {} {} to {}",
+                m.package.name, m.package.version, api
+            ))
+        );
+        return;
+    }
+
+    // sem API configurada: imprime a entrada para colar/adicionar no índice git.
     println!("# packages/{}.toml", m.package.name);
     println!("repo = \"{}\"", url);
     eprintln!(

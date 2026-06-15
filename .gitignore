@@ -18,3 +18,7 @@
 
 # settings locais do Claude (por máquina)
 /.claude/settings.local.json
+
+# dados do registry-site (pacotes publicados em runtime) e o binário compilado
+/registry-site/data
+/registry

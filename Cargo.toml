@@ -17,3 +17,7 @@ wasmi = "1.1.0"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 semver = "1"
+# registry via HTTP (site): `lex add`/`lex publish` falam com a API JSON do site.
+# A rede continua sendo via processo externo (`curl`, como o `git`); serde_json
+# só faz o parse da resposta.
+serde_json = "1"

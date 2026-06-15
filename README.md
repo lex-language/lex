@@ -1050,6 +1050,7 @@ require("lex").setup()                          -- acha o binário no projeto
 - [x] Tipo de retorno de arrow inferido do contexto: `const h: () => f64 = () => 2.5` não precisa mais de `(): f64 =>` — o `Fn` esperado define o tipo de retorno (a assinatura no IR é a mesma, célula i64)
 - [x] `lex check` (validação parser+sema sem codegen, p/ CI) e `lex lsp` (Language Server por stdio com diagnostics ao vivo)
 - [x] Tooling de registry: `lex registry init`/`add` e `lex publish` para criar/manter o índice de pacotes (o índice é um repo git com `packages/<nome>.toml`)
+- [x] **Registry como SITE, escrito em lex** ([`registry-site/`](registry-site/)): um servidor HTTP em lex (dogfooding do próprio `std/http.lex` + fs + JSON) com lista/busca, página de detalhe e API JSON. Com `LEX_REGISTRY_API=<url>`, o `lex add` resolve por `GET /api/pkg/<nome>` e o `lex publish` faz `POST /api/publish` (rede via `curl`, como o `git`; auth opcional por token). Deploy via [`Dockerfile`](registry-site/Dockerfile) — cross-compila o site para um binário estático e roda num `scratch`
 
 - [x] Posições por **span** nos erros de sema: cada diagnóstico carrega o trecho do fonte (statement/definição) etiquetado por módulo; o `lex check --json` devolve linha/coluna exatas (e o CLI desenha o trecho sublinhado), então o `lex lsp` aponta o ponto certo no editor em vez do painel de Problemas
 - [x] Cliente LSP empacotado na extensão do VS Code (`vscode-languageclient` que sobe o `lex lsp`) + config drop-in para Neovim ([`editors/nvim/lex.lua`](editors/nvim/lex.lua))
