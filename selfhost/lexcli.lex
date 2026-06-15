@@ -7,13 +7,17 @@
 //   lex fmt [--check] <arquivos.lex>      formata (in-place) ou confere
 //   lex test <arquivos.test.lex>...       roda as suítes via o harness
 //   lex check [--json] <arquivos.lex>...  diagnósticos (variável indefinida) em JSON
+//   lex lsp                               Language Server por stdio
+//   lex pkg <init|add|remove|list> ...    gerenciador de pacotes (manifesto)
 //   lex version                           versão
 //
-// (lsp/pkg/wasm ainda são binários à parte — ver README/REMOVER-RUST.md.)
+// (wasm/cross-compile e o fetch de rede do pkg ainda faltam — ver REMOVER-RUST.md.)
 import { compileFileToIR } from "./modloader"
 import { formatSource } from "./fmt"
 import { runTestFile } from "./testrunner"
 import { runCheck } from "./checker"
+import { runLsp } from "./lspserver"
+import { runPkg } from "./pkgcmd"
 
 fn hasSuffix(s: string, suf: string): bool {
     const sl: i64 = len(s);
@@ -123,5 +127,7 @@ else if (strEq(cmd, "run")) { rc = cmdRun(av); }
 else if (strEq(cmd, "fmt")) { rc = cmdFmt(av); }
 else if (strEq(cmd, "test")) { rc = cmdTest(av); }
 else if (strEq(cmd, "check")) { rc = cmdCheck(av); }
+else if (strEq(cmd, "lsp")) { rc = runLsp(); }
+else if (strEq(cmd, "pkg")) { rc = runPkg(av, 2); }
 else { Terminal.log(`lex: comando desconhecido '${cmd}'`); rc = 1; }
 return rc;
