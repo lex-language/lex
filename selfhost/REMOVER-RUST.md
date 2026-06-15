@@ -84,11 +84,16 @@ pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
 > `return testReport()` ao main, compila e roda. *VALIDADO*: `lextest semver.test.lex`
 > → "todas as 23 asserções passaram" (igual ao `lex test` Rust); `pkg.test.lex` idem.
 >
-> **LIMITAÇÃO**: arrows são NÃO-CAPTURANTES, então testes que usam `const`/`let` de
-> topo DENTRO dos arrows (ex.: `toml.test.lex` com `const MANIFEST`) falham
-> (`%MANIFEST.addr` indefinido). O Rust captura (`lambda_free_vars`); o `std/test.lex`
-> recomenda "dados em funções". **Paridade total do `lex test` exige captura de
-> arrow** (a parte adiada da Fase A).
+> **CAPTURA — FEITA** (via globais promovidos, sem closure/env): `const`/`let`
+> DIRETOS do `main` (script) e de cada lambda viram **slots globais** (`gget`/`gset`,
+> slots 2+; 0/1 são do harness), visíveis em qualquer função — inclusive captura
+> ANINHADA (`const` num arrow `describe` usado em arrows `test` internos). Regra:
+> main+lambdas excluem os globais dos allocas; funções normais mantêm (param/local
+> sombreia global homônimo — ex.: param `src` de `lexSrc` vs global `src` do `lexc`).
+> + métodos de string (`.contains`/`.startsWith`/`.endsWith`). *PARIDADE TOTAL*:
+> as **12 suítes** `selfhost/*.test.lex` passam sob o `lextest` (= `lex test` Rust).
+> O `lex test` agora roda **sem o Rust**. (Trade-off: nomes de const iguais entre
+> arrows compartilham slot — ok porque os testes rodam em sequência.)
 - **Driver** (`lextest.lex`, novo): `lex test <dir>` → `readDir`, filtra `*.test.lex`,
   e para cada arquivo: injeta `import { describe, test, expect, testReport } from
   "test"` + sintetiza um `main` que roda os `describe` de topo e retorna

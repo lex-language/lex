@@ -103,6 +103,29 @@ fn addUniq(names: string[], n: string): i64 {
     names.push(n);
     return 0;
 }
+fn idxOf(names: string[], n: string): i64 {
+    let i: i64 = 0;
+    while (i < names.len()) { if (strEq(names[i], n)) { return i; } i = i + 1; }
+    return -1;
+}
+// nomes em `list` que NÃO estão em `exclude` (p/ tirar os globais dos locais).
+fn without(list: string[], exclude: string[]): string[] {
+    let out: string[] = [];
+    for (const n of list) { if (idxOf(exclude, n) < 0) { out.push(n); } }
+    return out;
+}
+// nomes de const/let DIRETOS do corpo (sem recursão) — viram globais (gget/gset)
+// p/ que arrows os enxerguem (captura via global, sem closure/env).
+fn directLetNames(stmts: Stmt[]): string[] {
+    let names: string[] = [];
+    for (const s of stmts) { collectStmtLocal(s, names); }
+    return names;
+}
+fn isLambdaName(name: string): bool {
+    const pre: string = "__lambda_";
+    if (len(name) < len(pre)) { return false; }
+    return strEq(substring(name, 0, len(pre)), pre);
+}
 fn collectStmtLocal(s: Stmt, names: string[]): i64 {
     return match (s) { LetStmt l => addUniq(names, l.name), _ => 0 };
 }
@@ -147,6 +170,8 @@ class Codegen {
     matchN: i64        // contador de blocos de match (nomes únicos)
     bindNames: string[] // pilha de bindings de match (nome → endereço)
     bindAddrs: string[]
+    globalNames: string[] // const/let de topo promovidos a slots globais (gget/gset)
+    curLocals: string[]   // locais (alloca) da função atual — sombreiam globais
 
     constructor(sema: Sema) {
         this.out = ""
@@ -163,6 +188,8 @@ class Codegen {
         this.matchN = 0
         this.bindNames = []
         this.bindAddrs = []
+        this.globalNames = []
+        this.curLocals = []
     }
 
     // instrução normal: pulada se o bloco já terminou (código morto)
@@ -220,6 +247,18 @@ class Codegen {
         }
         return concat("%", concat(name, ".addr"));
     }
+    bindIndex(name: string): i64 {
+        let i: i64 = this.bindNames.len() - 1;
+        while (i >= 0) { if (strEq(this.bindNames[i], name)) { return i; } i = i - 1; }
+        return -1;
+    }
+    // é um global promovido (e não está sombreado por bind/local da função)?
+    isGlobalVar(name: string): bool {
+        if (this.bindIndex(name) >= 0) { return false; }
+        if (idxOf(this.curLocals, name) >= 0) { return false; }
+        return idxOf(this.globalNames, name) >= 0;
+    }
+    slotOfGlobal(name: string): i64 { return idxOf(this.globalNames, name) + 2; }   // 0/1 = harness
     bindPush(name: string, addr: string, ty: string) {
         this.bindNames.push(name);
         this.bindAddrs.push(addr);
@@ -231,6 +270,9 @@ class Codegen {
     }
 
     genLoad(name: string): string {
+        if (this.isGlobalVar(name)) {
+            return this.emitCall("__lex_gget", concat("i64 ", str(this.slotOfGlobal(name))));
+        }
         const t: string = this.newTmp();
         this.emit(`  ${t} = load i64, ptr ${this.varAddrOf(name)}`);
         return t;
@@ -335,6 +377,12 @@ class Codegen {
     }
     callRuntime(rfn: string, args: Expr[]): string {
         return this.emitCall(rfn, this.argList(args));
+    }
+    // método de string com 1 arg: rfn(base, arg0).
+    strMethod1(rfn: string, bv: string, args: Expr[]): string {
+        let a: string = "0";
+        if (args.len() >= 1) { a = this.genExpr(args[0]); }
+        return this.emitCall(rfn, `i64 ${bv}, i64 ${a}`);
     }
 
     // gera um arg; se o parâmetro é `any` e o valor é concreto, BOX num LexJson
@@ -458,6 +506,10 @@ class Codegen {
         if (strEq(m.method, "pop")) {
             return this.emitCall("__lex_arr_pop", concat("i64 ", bv));
         }
+        // métodos de string (s.contains(x)/startsWith/endsWith)
+        if (strEq(m.method, "contains")) { return this.strMethod1("__lex_contains", bv, m.args); }
+        if (strEq(m.method, "startsWith")) { return this.strMethod1("__lex_starts_with", bv, m.args); }
+        if (strEq(m.method, "endsWith")) { return this.strMethod1("__lex_ends_with", bv, m.args); }
         // método de classe: dispatch estático @Dono.metodo(this, args…)
         if (isClassTy(baseTy) && this.sema.classes.findInfo(baseTy) >= 0) {
             const owner: string = this.sema.classes.methodOwner(baseTy, m.method);
@@ -605,6 +657,10 @@ class Codegen {
 
     // ── statements (devolvem i64 dummy p/ caberem no match-expressão) ────────
     storeVar(name: string, v: string): i64 {
+        if (this.isGlobalVar(name)) {
+            this.emit(`  call i64 @__lex_gset(i64 ${this.slotOfGlobal(name)}, i64 ${v})`);
+            return 0;
+        }
         this.emit(`  store i64 ${v}, ptr ${this.varAddrOf(name)}`);
         return 0;
     }
@@ -614,7 +670,7 @@ class Codegen {
         let ty: string = l.ty;
         if (strEq(ty, "")) { ty = this.sema.typeOf(l.value, this.scope); }
         const v: string = this.genExpr(l.value);
-        this.emit(`  store i64 ${v}, ptr ${this.varAddrOf(l.name)}`);   // alloca hoistada no entry
+        this.storeVar(l.name, v);          // gset se global promovido; senão store na alloca
         this.scope.set(l.name, ty);
         return 0;
     }
@@ -879,7 +935,8 @@ class Codegen {
         addUniq(locals, "this");
         for (const p of f.params) { addUniq(locals, p.name); }
         collectLocals(f.body, locals);
-        for (const lnm of locals) { this.emit(`  %${lnm}.addr = alloca i64`); }
+        this.curLocals = locals;       // método nunca é main: tudo é local
+        for (const lnm of this.curLocals) { this.emit(`  %${lnm}.addr = alloca i64`); }
         this.emit(`  store i64 %this, ptr %this.addr`);
         for (const p of f.params) {
             this.emit(`  store i64 %${p.name}, ptr %${p.name}.addr`);
@@ -912,11 +969,17 @@ class Codegen {
         this.raw(`define ${retTy} @${f.name}(${ps}) {`);
         this.term = false;   // 1º bloco é implícito (não rotular: 'entry' colidiria c/ params)
 
-        // hoista uma alloca por nome de local (params + lets + for-of) no entry
+        // hoista uma alloca por nome de local (params + lets + for-of) no entry.
+        // No `main`, os const/let de TOPO são globais promovidos (gget/gset) → fora
+        // dos allocas; fora do main tudo é local (e sombreia qualquer global).
         let locals: string[] = [];
         for (const p of f.params) { addUniq(locals, p.name); }
         collectLocals(f.body, locals);
-        for (const lnm of locals) { this.emit(`  %${lnm}.addr = alloca i64`); }
+        // main e lambdas: globais promovidos ficam fora dos allocas (são gget/gset);
+        // funções normais: tudo é local (param/local sombreia qualquer global homônimo).
+        if (this.curMain || isLambdaName(f.name)) { this.curLocals = without(locals, this.globalNames); }
+        else { this.curLocals = locals; }
+        for (const lnm of this.curLocals) { this.emit(`  %${lnm}.addr = alloca i64`); }
         for (const p of f.params) {
             this.emit(`  store i64 %${p.name}, ptr %${p.name}.addr`);
         }
@@ -934,6 +997,15 @@ class Codegen {
     }
 
     genProgram(prog: Program): i64 {
+        // const/let de topo (do main) E os DIRETOS de cada lambda viram globais
+        // promovidos (gget/gset) — assim arrows os capturam (sem closure/env),
+        // inclusive captura aninhada. Definido ANTES de gerar funcs/lambdas/main.
+        this.globalNames = directLetNames(prog.main);
+        for (const fl of prog.funcs) {
+            if (isLambdaName(fl.name)) {
+                for (const nm of directLetNames(fl.body)) { addUniq(this.globalNames, nm); }
+            }
+        }
         // preâmbulo: formatos de print + printf + declarações do runtime (__lex_*).
         // Tudo trafega i64 (ponteiros como inteiros); as funções void do runtime
         // (arr_push/set, map_set) são declaradas i64 e o retorno é ignorado.
@@ -944,6 +1016,8 @@ class Codegen {
         this.raw("declare i64 @__lex_strlen(i64)");
         this.raw("declare i64 @__lex_str_eq(i64, i64)");
         this.raw("declare i64 @__lex_contains(i64, i64)");
+        this.raw("declare i64 @__lex_starts_with(i64, i64)");
+        this.raw("declare i64 @__lex_ends_with(i64, i64)");
         this.raw("declare i64 @__lex_substring(i64, i64, i64)");
         this.raw("declare i64 @__lex_char_at(i64, i64)");
         this.raw("declare i64 @__lex_i64_to_str(i64)");
