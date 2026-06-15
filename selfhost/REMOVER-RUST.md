@@ -72,14 +72,23 @@ pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
 - **Gotcha conhecido** (memória do projeto): `expect` só estrutura arrays LITERAIS;
   array vindo de var é encaixotado como ponteiro-número. Decidir se replica ou corrige.
 
-## Fase C — `lex test` (driver + harness)  ·  esforço: M  (depende de A, B)
+## Fase C — `lex test` (driver + harness)  ·  esforço: M  ·  ✅ FEITO (não-capturante)
 - O harness JÁ existe (`std/test.lex`: `describe/test/it/expect/testReport`,
-  placar em slots globais `gget/gset`). Com A+B, o compilador self-hosted passa a
-  compilá-lo — **MAS falta ainda** os métodos VARIÁDICOS do `Terminal`
-  (`Terminal.error/success/info(..., any, ...)`) que o harness usa pra imprimir o
-  placar e as falhas. Hoje o codegen self-hosted só trata `Terminal.log` (1 arg).
-  Logo Fase C = (a) métodos variádicos + impressão de `any` no `Terminal`,
-  (b) o driver `lextest` (acha `.test.lex`, injeta o import do harness).
+  placar em slots globais `gget/gset`).
+
+> **FEITO**: (a) `Terminal.<método>(…)` virou **builtin de prelúdio** no codegen
+> (`genTerminalPrint`: concatena os args por tipo — string/any/f64/i64/bool — e
+> imprime + `\n`), evitando compilar `std/terminal.lex` (que usa static/variádico/
+> libc). + builtins `gget`/`gset`/`fabs`/`contains`. (b) Driver **`lextest.lex`**:
+> mescla `std/test.lex` + o arquivo de teste (e seus imports) num Program, anexa
+> `return testReport()` ao main, compila e roda. *VALIDADO*: `lextest semver.test.lex`
+> → "todas as 23 asserções passaram" (igual ao `lex test` Rust); `pkg.test.lex` idem.
+>
+> **LIMITAÇÃO**: arrows são NÃO-CAPTURANTES, então testes que usam `const`/`let` de
+> topo DENTRO dos arrows (ex.: `toml.test.lex` com `const MANIFEST`) falham
+> (`%MANIFEST.addr` indefinido). O Rust captura (`lambda_free_vars`); o `std/test.lex`
+> recomenda "dados em funções". **Paridade total do `lex test` exige captura de
+> arrow** (a parte adiada da Fase A).
 - **Driver** (`lextest.lex`, novo): `lex test <dir>` → `readDir`, filtra `*.test.lex`,
   e para cada arquivo: injeta `import { describe, test, expect, testReport } from
   "test"` + sintetiza um `main` que roda os `describe` de topo e retorna

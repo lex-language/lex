@@ -65,6 +65,7 @@ fn irEscape(s: string): string {
 fn runtimeFn(name: string): string {
     if (strEq(name, "concat")) { return "__lex_concat"; }
     if (strEq(name, "strEq")) { return "__lex_str_eq"; }
+    if (strEq(name, "contains")) { return "__lex_contains"; }
     if (strEq(name, "substring")) { return "__lex_substring"; }
     if (strEq(name, "charAt")) { return "__lex_char_at"; }
     if (strEq(name, "str")) { return "__lex_i64_to_str"; }
@@ -87,6 +88,10 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "jsonStr")) { return "__lex_json_str"; }
     if (strEq(name, "jsonFloat")) { return "__lex_json_float"; }
     if (strEq(name, "jsonBool")) { return "__lex_json_bool"; }
+    // slots globais + float (usados pelo harness de teste std/test.lex)
+    if (strEq(name, "gget")) { return "__lex_gget"; }
+    if (strEq(name, "gset")) { return "__lex_gset"; }
+    if (strEq(name, "fabs")) { return "__lex_f_abs"; }
     return "";
 }
 
@@ -370,19 +375,40 @@ class Codegen {
         return this.callRuntime(rfn, c.args);
     }
 
-    // Terminal.log(x): imprime conforme o tipo de x (string/f64/inteiro) + \n.
-    genTerminalLog(args: Expr[]): string {
-        if (args.len() == 0) { return "0"; }
-        const ty: string = this.sema.typeOf(args[0], this.scope);
-        const v: string = this.genExpr(args[0]);
-        if (strEq(ty, "string")) {
-            this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, i64 ${v})`);
-        } else if (strEq(ty, "f64")) {
-            const s: string = this.emitCall("__lex_f64_to_str", concat("i64 ", v));
-            this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, i64 ${s})`);
-        } else {
-            this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_int, i64 ${v})`);
+    // converte um valor ao texto conforme o tipo (p/ Terminal.*): string como
+    // está; f64→f64_to_str; any/bool→json_as_str; resto→i64_to_str.
+    toText(a: Expr): string {
+        const ty: string = this.sema.typeOf(a, this.scope);
+        const v: string = this.genExpr(a);
+        if (strEq(ty, "string")) { return v; }
+        if (strEq(ty, "f64")) { return this.emitCall("__lex_f64_to_str", concat("i64 ", v)); }
+        if (strEq(ty, "any")) { return this.emitCall("__lex_json_as_str", concat("i64 ", v)); }
+        if (strEq(ty, "bool")) {
+            const j: string = this.emitCall("__lex_json_bool", concat("i64 ", v));
+            return this.emitCall("__lex_json_as_str", concat("i64 ", j));
         }
+        return this.emitCall("__lex_i64_to_str", concat("i64 ", v));
+    }
+    // Terminal.<qualquer>(a, b, …): concatena os args (por tipo), separa por
+    // espaço, imprime + \n. (Builtin de prelúdio — evita compilar std/terminal.lex;
+    // sem cor/rótulos: o símbolo/bullet vem dos próprios args do chamador.)
+    genTerminalPrint(args: Expr[]): string {
+        if (args.len() == 0) {
+            this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, i64 ${this.genStrLit("")})`);
+            return "0";
+        }
+        let acc: string = "";
+        let i: i64 = 0;
+        for (const a of args) {
+            const piece: string = this.toText(a);
+            if (i == 0) { acc = piece; }
+            else {
+                const sp: string = this.emitCall("__lex_concat", `i64 ${acc}, i64 ${this.genStrLit(" ")}`);
+                acc = this.emitCall("__lex_concat", `i64 ${sp}, i64 ${piece}`);
+            }
+            i = i + 1;
+        }
+        this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, i64 ${acc})`);
         return "0";
     }
 
@@ -412,8 +438,8 @@ class Codegen {
 
     // chamadas de método: Terminal.log e (Stage B/C) coleções; resto → F6.4.
     genMethodCall(m: MethodCall): string {
-        if (strEq(varName(m.base), "Terminal") && strEq(m.method, "log")) {
-            return this.genTerminalLog(m.args);
+        if (strEq(varName(m.base), "Terminal")) {
+            return this.genTerminalPrint(m.args);
         }
         const baseTy: string = this.sema.typeOf(m.base, this.scope);
         const bv: string = this.genExpr(m.base);
@@ -917,6 +943,7 @@ class Codegen {
         this.raw("declare i64 @__lex_concat(i64, i64)");
         this.raw("declare i64 @__lex_strlen(i64)");
         this.raw("declare i64 @__lex_str_eq(i64, i64)");
+        this.raw("declare i64 @__lex_contains(i64, i64)");
         this.raw("declare i64 @__lex_substring(i64, i64, i64)");
         this.raw("declare i64 @__lex_char_at(i64, i64)");
         this.raw("declare i64 @__lex_i64_to_str(i64)");
@@ -948,6 +975,9 @@ class Codegen {
         this.raw("declare i64 @__lex_json_as_float(i64)");
         this.raw("declare i64 @__lex_json_as_str(i64)");
         this.raw("declare i64 @__lex_json_stringify(i64)");
+        this.raw("declare i64 @__lex_gget(i64)");
+        this.raw("declare i64 @__lex_gset(i64, i64)");
+        this.raw("declare i64 @__lex_f_abs(i64)");
         this.raw("");
         // métodos de classe (dispatch estático): @Classe.metodo(i64 %this, …)
         for (const c of prog.classes) {
