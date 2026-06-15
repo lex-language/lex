@@ -9,7 +9,7 @@
 // Subset suportado: ver selfhost/codegen.lex. Compila programas com funções
 // i64, if/while, aritmética/comparações e chamadas; `main(): i32` vira o
 // exit code.
-import { compileToIR } from "./codegen"
+import { compileFileToIR } from "./modloader"
 
 const av: string[] = args();
 if (av.len() < 2) {
@@ -27,11 +27,14 @@ if (len(src) == 0) {
     return 1;
 }
 
-const ir: string = compileToIR(src);
+const ir: string = compileFileToIR(path);   // resolve imports + codegen
 const llPath: string = concat(outBin, ".ll");
 writeFile(llPath, ir);
 
-const cmd: string = `clang -Wno-override-module -o ${outBin} ${llPath}`;
+// linka o runtime C (resolve os __lex_* de string/array/map/host). Por ora o
+// caminho src/runtime.c é relativo à raiz do repo; localizá-lo/embuti-lo de forma
+// robusta fica p/ a F6.5 (igual o compilador Rust embute runtime.c).
+const cmd: string = `clang -Wno-override-module -o ${outBin} ${llPath} src/runtime.c -lpthread`;
 const rc: i64 = system(cmd);
 if (rc != 0) {
     Terminal.log(`erro: clang falhou (rc=${rc})`);

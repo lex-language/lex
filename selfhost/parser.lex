@@ -5,17 +5,19 @@
 // o mesmo mecanismo que a sema/codegen vão usar. O operador binário/unário é
 // guardado como o `Tok` do lexer (sem um enum BinOp separado).
 //
-// Cobertura atual:
+// Cobertura (F6.1 — cobre todo o subset que o próprio selfhost/*.lex usa):
 //   - Expressões: literais (int/float/bool/string), variáveis, unários (! - ~),
 //     toda a escada de precedência (precedence climbing), parênteses, chamadas,
-//     array literal, pós-fixos `.campo`/`.metodo(args)`/`[i]`.
+//     array literal, pós-fixos `.campo`/`.metodo(args)`/`[i]`, `new C(args)`,
+//     `match` por tipo, template literals `...${}...`, map `{}`/struct literal.
 //   - Statements: let/const (com anotação de tipo), atribuição (`x`/`a.b`/`xs[i]`),
-//     return, if/else (e else-if), while, break, continue, expr-statement.
-//   - Declaração de função: `fn nome(p: T, …): R[!] { corpo }`.
+//     return, if/else (e else-if), while, for-of, for C-style, break, continue,
+//     expr-statement.
+//   - Declarações de topo: `fn`, `class` (extends/constructor/campos/métodos),
+//     `enum`, `import`; statements de topo viram um `main` (script-mode).
 // Como em src/parser.rs, quebras de linha são INVISÍVEIS p/ peek/advance.
-// TODO: for/for-of, defer/fail, compound assign (+=,++), match/try/catch/spawn/
-//   await/new/struct/map/template/arrow, e as demais declarações de topo
-//   (class/type/enum/interface/import/declare).
+// TODO: defer/fail, compound assign (+=,++), try/catch/spawn/await/arrow, e as
+//   declarações de topo type/interface/declare (não usadas pelo compilador).
 import { lexSrc, Token, Tok } from "./lexer"
 
 // ── AST: expressões ──────────────────────────────────────────────────────────
@@ -79,6 +81,39 @@ class Index extends Expr {
     index: Expr
     constructor(base: Expr, index: Expr) { this.base = base; this.index = index }
 }
+class NewExpr extends Expr {
+    cls: string
+    args: Expr[]
+    constructor(cls: string, args: Expr[]) { this.cls = cls; this.args = args }
+}
+class MapLit extends Expr {
+    mapKeys: string[]   // chaves string (paralelo a vals); vazio = `{}`
+    vals: Expr[]
+    constructor(mapKeys: string[], vals: Expr[]) { this.mapKeys = mapKeys; this.vals = vals }
+}
+class StructLit extends Expr {
+    fields: string[]    // chaves identificadoras (paralelo a vals)
+    vals: Expr[]
+    constructor(fields: string[], vals: Expr[]) { this.fields = fields; this.vals = vals }
+}
+class Template extends Expr {
+    parts: Expr[]       // pedaços: StrLit (literal) ou Expr (interpolação ${})
+    constructor(parts: Expr[]) { this.parts = parts }
+}
+// um braço de `match`: padrão `Tipo bind` (bind="" e pat="_" → curinga) e corpo
+class MatchArm {
+    pat: string
+    bind: string
+    body: Expr
+    constructor(pat: string, bind: string, body: Expr) {
+        this.pat = pat; this.bind = bind; this.body = body
+    }
+}
+class Match extends Expr {
+    subject: Expr
+    arms: MatchArm[]
+    constructor(subject: Expr, arms: MatchArm[]) { this.subject = subject; this.arms = arms }
+}
 
 // ── AST: statements e declarações ────────────────────────────────────────────
 class Stmt {}
@@ -121,6 +156,31 @@ class ExprStmt extends Stmt {
     expr: Expr
     constructor(expr: Expr) { this.expr = expr }
 }
+class ForOfStmt extends Stmt {
+    name: string
+    mutable: bool
+    iter: Expr
+    body: Stmt[]
+    constructor(name: string, mutable: bool, iter: Expr, body: Stmt[]) {
+        this.name = name; this.mutable = mutable; this.iter = iter; this.body = body
+    }
+}
+class ForStmt extends Stmt {
+    init: Stmt          // ausente → placeholder; ver hasInit
+    hasInit: bool
+    cond: Expr
+    hasCond: bool
+    update: Stmt
+    hasUpdate: bool
+    body: Stmt[]
+    constructor(init: Stmt, hasInit: bool, cond: Expr, hasCond: bool,
+        update: Stmt, hasUpdate: bool, body: Stmt[]) {
+        this.init = init; this.hasInit = hasInit
+        this.cond = cond; this.hasCond = hasCond
+        this.update = update; this.hasUpdate = hasUpdate
+        this.body = body
+    }
+}
 
 class Param {
     name: string
@@ -136,6 +196,45 @@ class Func {
     constructor(name: string, params: Param[], ret: string, fallible: bool, body: Stmt[]) {
         this.name = name; this.params = params; this.ret = ret
         this.fallible = fallible; this.body = body
+    }
+}
+
+// ── declarações de topo ──────────────────────────────────────────────────────
+class Import {
+    names: string[]
+    module: string
+    constructor(names: string[], module: string) { this.names = names; this.module = module }
+}
+class EnumDecl {
+    name: string
+    variants: string[]
+    constructor(name: string, variants: string[]) { this.name = name; this.variants = variants }
+}
+class ClassField {
+    name: string
+    ty: string
+    constructor(name: string, ty: string) { this.name = name; this.ty = ty }
+}
+class ClassDecl {
+    name: string
+    parent: string          // "" = sem extends
+    fields: ClassField[]
+    methods: Func[]         // métodos e constructor (Func com name="constructor")
+    constructor(name: string, parent: string, fields: ClassField[], methods: Func[]) {
+        this.name = name; this.parent = parent; this.fields = fields; this.methods = methods
+    }
+}
+// Programa = imports + enums + classes + funções + statements de topo
+// (script-mode → corpo de um `main` sintetizado). Espelha src/parser.rs.
+class Program {
+    imports: Import[]
+    enums: EnumDecl[]
+    classes: ClassDecl[]
+    funcs: Func[]
+    main: Stmt[]
+    constructor(imports: Import[], enums: EnumDecl[], classes: ClassDecl[], funcs: Func[], main: Stmt[]) {
+        this.imports = imports; this.enums = enums
+        this.classes = classes; this.funcs = funcs; this.main = main
     }
 }
 
@@ -172,6 +271,21 @@ class Parser {
     }
 
     peekKind(): Tok { return this.toks[this.nextPos()].kind; }
+
+    // o `skip`-ésimo token a partir do atual, ignorando newlines (lookahead).
+    peekToken(skip: i64): Token {
+        let i: i64 = this.pos;
+        let seen: i64 = 0;
+        const last: i64 = this.toks.len() - 1;
+        while (i < this.toks.len()) {
+            if (this.toks[i].kind != Tok.Newline) {
+                if (seen == skip) { return this.toks[i]; }
+                seen = seen + 1;
+            }
+            i = i + 1;
+        }
+        return this.toks[last];
+    }
 
     advance(): Token {
         const i: i64 = this.nextPos();
@@ -281,6 +395,14 @@ class Parser {
             this.expect(Tok.RBracket);
             return new ArrayLit(items);
         }
+        if (k == Tok.New) {
+            const cname: string = this.advance().text;
+            this.skipTypeArgs();
+            return new NewExpr(cname, this.parseArgs());
+        }
+        if (k == Tok.Match) { return this.parseMatch(); }
+        if (k == Tok.Template) { return this.parseTemplate(t.text); }
+        if (k == Tok.LBrace) { return this.parseBrace(); }
         if (k == Tok.Ident) {
             if (this.peekKind() == Tok.LParen) {
                 return new Call(t.text, this.parseArgs());
@@ -288,6 +410,115 @@ class Parser {
             return new Var(t.text);
         }
         return new Var("<?>");   // token inesperado (PoC)
+    }
+
+    // pula `<...>` de argumentos de tipo (ex.: `new Box<i64>(...)`), se houver.
+    skipTypeArgs() {
+        if (this.peekKind() != Tok.Lt) { return; }
+        let depth: i64 = 0;
+        while (true) {
+            const kk: Tok = this.peekKind();
+            if (kk == Tok.Lt) { depth = depth + 1; this.advance(); }
+            else if (kk == Tok.Gt) {
+                depth = depth - 1; this.advance();
+                if (depth == 0) { break; }
+            }
+            else if (kk == Tok.Eof) { break; }
+            else { this.advance(); }
+        }
+    }
+
+    // `match (subj) { Tipo bind => expr, _ => expr, ... }` — expressão. O token
+    // `match` já foi consumido pelo advance() de parsePrimary.
+    parseMatch(): Expr {
+        this.expect(Tok.LParen);
+        const subj: Expr = this.parseExpr();
+        this.expect(Tok.RParen);
+        this.expect(Tok.LBrace);
+        let arms: MatchArm[] = [];
+        while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
+            if (this.peekKind() == Tok.Comma || this.peekKind() == Tok.Semicolon) {
+                this.advance(); continue;
+            }
+            const pat: string = this.advance().text;     // Tipo, ou "_"
+            let bind: string = "";
+            if (!strEq(pat, "_")) { bind = this.advance().text; }
+            this.expect(Tok.FatArrow);
+            const body: Expr = this.parseExpr();
+            arms.push(new MatchArm(pat, bind, body));
+            if (this.peekKind() == Tok.Comma) { this.advance(); }
+        }
+        this.expect(Tok.RBrace);
+        return new Match(subj, arms);
+    }
+
+    // `{}`/`{ "k": v, ... }` (map) ou `{ ident: v, ... }` (struct). O `{` já saiu.
+    parseBrace(): Expr {
+        const k: Tok = this.peekKind();
+        if (k == Tok.RBrace || k == Tok.Str) {
+            let mkeys: string[] = [];
+            let mvals: Expr[] = [];
+            while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
+                mkeys.push(this.advance().text);          // chave string
+                this.expect(Tok.Colon);
+                mvals.push(this.parseExpr());
+                if (this.peekKind() == Tok.Comma) { this.advance(); }
+            }
+            this.expect(Tok.RBrace);
+            return new MapLit(mkeys, mvals);
+        }
+        let fields: string[] = [];
+        let svals: Expr[] = [];
+        while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
+            fields.push(this.advance().text);            // chave identificadora
+            this.expect(Tok.Colon);
+            svals.push(this.parseExpr());
+            if (this.peekKind() == Tok.Comma) { this.advance(); }
+        }
+        this.expect(Tok.RBrace);
+        return new StructLit(fields, svals);
+    }
+
+    // template `...${expr}...`: o lexer entrega o corpo CRU; aqui dividimos em
+    // literais (StrLit) e interpolações (expr lexada+parseada). Rastreia a
+    // profundidade de chaves dentro de `${ }`; literais vazios são omitidos.
+    parseTemplate(raw: string): Expr {
+        let parts: Expr[] = [];
+        const n: i64 = len(raw);
+        let i: i64 = 0;
+        let lit: string = "";
+        while (i < n) {
+            const c: i64 = peek8(raw, i);
+            if (c == 36 && i + 1 < n && peek8(raw, i + 1) == 123) {   // ${
+                if (len(lit) > 0) { parts.push(new StrLit(lit)); lit = ""; }
+                i = i + 2;
+                const start: i64 = i;
+                let depth: i64 = 1;
+                while (i < n && depth > 0) {
+                    const d: i64 = peek8(raw, i);
+                    if (d == 123) { depth = depth + 1; }
+                    else if (d == 125) { depth = depth - 1; if (depth == 0) { break; } }
+                    i = i + 1;
+                }
+                const inner: string = substring(raw, start, i);
+                if (i < n) { i = i + 1; }                              // pula }
+                const sub: Parser = new Parser(lexSrc(inner));
+                parts.push(sub.parseExpr());
+                continue;
+            }
+            if (c == 92 && i + 1 < n) {                                // escape \X
+                const e: i64 = peek8(raw, i + 1);
+                if (e == 110) { lit = concat(lit, "\n"); }
+                else if (e == 116) { lit = concat(lit, "\t"); }
+                else { lit = concat(lit, charAt(raw, i + 1)); }
+                i = i + 2;
+                continue;
+            }
+            lit = concat(lit, charAt(raw, i));
+            i = i + 1;
+        }
+        if (len(lit) > 0) { parts.push(new StrLit(lit)); }
+        return new Template(parts);
     }
 
     // ── tipos (forma textual, suficiente p/ a AST do PoC) ─────────────────────
@@ -333,6 +564,7 @@ class Parser {
         if (k == Tok.Return) { return this.parseReturn(); }
         if (k == Tok.If) { return this.parseIf(); }
         if (k == Tok.While) { return this.parseWhile(); }
+        if (k == Tok.For) { return this.parseFor(); }
         if (k == Tok.Break) { this.advance(); this.eatSemi(); return new BreakStmt(); }
         if (k == Tok.Continue) { this.advance(); this.eatSemi(); return new ContinueStmt(); }
         // default: expr-statement ou atribuição (`lvalue = expr`)
@@ -398,19 +630,86 @@ class Parser {
         return new WhileStmt(cond, body);
     }
 
-    // ── declaração de função ──────────────────────────────────────────────────
+    // init/update de `for` C-style: let-decl ou expr/atribuição, SEM consumir ';'.
+    parseSimpleStmtNoSemi(): Stmt {
+        const k: Tok = this.peekKind();
+        if (k == Tok.Const || k == Tok.Let) {
+            const mutable: bool = (k == Tok.Let);
+            this.advance();
+            const name: string = this.advance().text;
+            let ty: string = "";
+            if (this.peekKind() == Tok.Colon) { this.advance(); ty = this.parseTypeStr(); }
+            this.expect(Tok.Eq);
+            const value: Expr = this.parseExpr();
+            return new LetStmt(name, ty, mutable, value);
+        }
+        const e: Expr = this.parseExpr();
+        if (this.peekKind() == Tok.Eq) {
+            this.advance();
+            const v: Expr = this.parseExpr();
+            return new AssignStmt(e, v);
+        }
+        return new ExprStmt(e);
+    }
+
+    // `for (const x of iter) { ... }` (for-of) ou `for (init; cond; update) {...}`
+    parseFor(): Stmt {
+        this.advance();                              // for
+        this.expect(Tok.LParen);
+        // for-of: (const|let) ident 'of' ...  ('of' é Ident contextual)
+        const k0: Tok = this.peekToken(0).kind;
+        if ((k0 == Tok.Const || k0 == Tok.Let)
+            && this.peekToken(1).kind == Tok.Ident
+            && this.peekToken(2).kind == Tok.Ident
+            && strEq(this.peekToken(2).text, "of")) {
+            const mutable: bool = (k0 == Tok.Let);
+            this.advance();                          // const/let
+            const name: string = this.advance().text;
+            this.advance();                          // 'of'
+            const iter: Expr = this.parseExpr();
+            this.expect(Tok.RParen);
+            const body: Stmt[] = this.parseBlock();
+            return new ForOfStmt(name, mutable, iter, body);
+        }
+        // estilo C: init ; cond ; update
+        let init: Stmt = new ExprStmt(new IntLit(0));
+        let hasInit: bool = false;
+        if (this.peekKind() != Tok.Semicolon) { init = this.parseSimpleStmtNoSemi(); hasInit = true; }
+        this.expect(Tok.Semicolon);
+        let cond: Expr = new BoolLit(true);
+        let hasCond: bool = false;
+        if (this.peekKind() != Tok.Semicolon) { cond = this.parseExpr(); hasCond = true; }
+        this.expect(Tok.Semicolon);
+        let update: Stmt = new ExprStmt(new IntLit(0));
+        let hasUpdate: bool = false;
+        if (this.peekKind() != Tok.RParen) { update = this.parseSimpleStmtNoSemi(); hasUpdate = true; }
+        this.expect(Tok.RParen);
+        const body: Stmt[] = this.parseBlock();
+        return new ForStmt(init, hasInit, cond, hasCond, update, hasUpdate, body);
+    }
+
+    // ── declaração de função e métodos ────────────────────────────────────────
     parseFunc(): Func {
         this.expect(Tok.Function);                   // fn / function
         const name: string = this.advance().text;
+        return this.parseSig(name);
+    }
+
+    // `(params): R[!] { corpo }` — assinatura+corpo, compartilhada por funções e
+    // métodos. Tolera variádico `...p` e defaults `p = expr` (ambos descartados
+    // na forma textual). `name` é o nome já lido pelo chamador.
+    parseSig(name: string): Func {
         this.expect(Tok.LParen);
         let params: Param[] = [];
         while (this.peekKind() != Tok.RParen && this.peekKind() != Tok.Eof) {
+            if (this.peekKind() == Tok.DotDotDot) { this.advance(); }     // variádico
             const pname: string = this.advance().text;
             let pty: string = "";
             if (this.peekKind() == Tok.Colon) {
                 this.advance();
                 pty = this.parseTypeStr();
             }
+            if (this.peekKind() == Tok.Eq) { this.advance(); this.parseExpr(); }  // default
             params.push(new Param(pname, pty));
             if (this.peekKind() == Tok.Comma) { this.advance(); }
         }
@@ -426,18 +725,103 @@ class Parser {
         return new Func(name, params, ret, fallible, body);
     }
 
-    // Programa = lista de funções de topo. (Subset: ignora outras declarações;
-    // class/type/enum/import/script-mode são TODO.)
-    parseProgram(): Func[] {
-        let fns: Func[] = [];
-        while (this.peekKind() != Tok.Eof) {
-            if (this.peekKind() == Tok.Function) {
-                fns.push(this.parseFunc());
-            } else {
-                this.advance();   // pula o que o subset ainda não parseia
+    // ── declarações de topo ───────────────────────────────────────────────────
+    // `import { a, b } from "módulo"`
+    parseImport(): Import {
+        this.advance();                              // import
+        this.expect(Tok.LBrace);
+        let names: string[] = [];
+        while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
+            names.push(this.advance().text);
+            if (this.peekKind() == Tok.Comma) { this.advance(); }
+        }
+        this.expect(Tok.RBrace);
+        this.expect(Tok.From);
+        const mod: string = this.advance().text;     // Str
+        this.eatSemi();
+        return new Import(names, mod);
+    }
+
+    // `enum Nome { A, B, C }` — variantes separadas por vírgula/';'/quebra.
+    parseEnum(): EnumDecl {
+        this.advance();                              // enum
+        const name: string = this.advance().text;
+        this.expect(Tok.LBrace);
+        let variants: string[] = [];
+        while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
+            if (this.peekKind() == Tok.Comma || this.peekKind() == Tok.Semicolon) {
+                this.advance(); continue;
+            }
+            variants.push(this.advance().text);
+            if (this.peekKind() == Tok.Comma) { this.advance(); }
+        }
+        this.expect(Tok.RBrace);
+        this.eatSemi();
+        return new EnumDecl(name, variants);
+    }
+
+    // `class Nome [extends Pai] [implements ...] { campos  métodos }`
+    parseClass(): ClassDecl {
+        this.advance();                              // class
+        const name: string = this.advance().text;
+        this.skipTypeArgs();                         // <T> opcional
+        let parent: string = "";
+        if (this.peekKind() == Tok.Extends) { this.advance(); parent = this.advance().text; }
+        if (this.peekKind() == Tok.Implements) {     // implements A, B — descartado
+            this.advance(); this.advance();
+            while (this.peekKind() == Tok.Comma) { this.advance(); this.advance(); }
+        }
+        this.expect(Tok.LBrace);
+        let fields: ClassField[] = [];
+        let methods: Func[] = [];
+        while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
+            if (this.peekKind() == Tok.Semicolon) { this.advance(); continue; }
+            // modificadores private/static — descartados na forma textual
+            while (this.peekKind() == Tok.Private || this.peekKind() == Tok.Static) {
+                this.advance();
+            }
+            const mname: string = this.advance().text;
+            if (this.peekKind() == Tok.LParen) {     // método ou constructor
+                methods.push(this.parseSig(mname));
+            } else {                                  // campo: `nome: tipo [= init]`
+                this.expect(Tok.Colon);
+                const ty: string = this.parseTypeStr();
+                if (this.peekKind() == Tok.Eq) { this.advance(); this.parseExpr(); }  // static init
+                this.eatSemi();
+                fields.push(new ClassField(mname, ty));
             }
         }
-        return fns;
+        this.expect(Tok.RBrace);
+        this.eatSemi();
+        return new ClassDecl(name, parent, fields, methods);
+    }
+
+    // Programa completo: imports + enums + classes + funções. (type/interface/
+    // declare e statements de topo ainda são pulados — TODO.)
+    parseModule(): Program {
+        let imports: Import[] = [];
+        let enums: EnumDecl[] = [];
+        let classes: ClassDecl[] = [];
+        let funcs: Func[] = [];
+        let main: Stmt[] = [];
+        while (this.peekKind() != Tok.Eof) {
+            const k: Tok = this.peekKind();
+            if (k == Tok.Semicolon) { this.advance(); }
+            else if (k == Tok.Import) { imports.push(this.parseImport()); }
+            else if (k == Tok.Enum) { enums.push(this.parseEnum()); }
+            else if (k == Tok.Class) { classes.push(this.parseClass()); }
+            else if (k == Tok.Function) { funcs.push(this.parseFunc()); }
+            else if (k == Tok.Type || k == Tok.Interface || k == Tok.Declare) {
+                this.advance();   // type/interface/declare: ainda não modelados (TODO)
+            }
+            else { main.push(this.parseStmt()); }   // statement de topo (script-mode)
+        }
+        return new Program(imports, enums, classes, funcs, main);
+    }
+
+    // Compat: o codegen/interp do subset só querem as funções de topo.
+    parseProgram(): Func[] {
+        return this.parseModule().funcs;
     }
 }
 
@@ -490,6 +874,39 @@ fn printList(items: Expr[]): string {
     return s;
 }
 
+fn printArm(a: MatchArm): string {
+    if (strEq(a.pat, "_")) { return `(_ ${printExpr(a.body)})`; }
+    return `(${a.pat} ${a.bind} ${printExpr(a.body)})`;
+}
+fn printMatch(m: Match): string {
+    let s: string = `(match ${printExpr(m.subject)}`;
+    for (const a of m.arms) { s = concat(s, concat(" ", printArm(a))); }
+    return concat(s, ")");
+}
+fn printTpl(t: Template): string {
+    let s: string = "(tpl";
+    for (const p of t.parts) { s = concat(s, concat(" ", printExpr(p))); }
+    return concat(s, ")");
+}
+fn printMap(m: MapLit): string {
+    let s: string = "(map";
+    let i: i64 = 0;
+    while (i < m.mapKeys.len()) {
+        s = concat(s, ` "${m.mapKeys[i]}" ${printExpr(m.vals[i])}`);
+        i = i + 1;
+    }
+    return concat(s, ")");
+}
+fn printStruct(st: StructLit): string {
+    let s: string = "(struct";
+    let i: i64 = 0;
+    while (i < st.fields.len()) {
+        s = concat(s, ` ${st.fields[i]} ${printExpr(st.vals[i])}`);
+        i = i + 1;
+    }
+    return concat(s, ")");
+}
+
 fn printExpr(e: Expr): string {
     return match (e) {
         IntLit n => str(n.value),
@@ -504,6 +921,11 @@ fn printExpr(e: Expr): string {
         Field fld => `(. ${printExpr(fld.base)} ${fld.field})`,
         Index ix => `(index ${printExpr(ix.base)} ${printExpr(ix.index)})`,
         ArrayLit a => `[${printList(a.items)}]`,
+        NewExpr ne => `(new ${ne.cls}${printArgs(ne.args)})`,
+        Match mt => printMatch(mt),
+        Template tp => printTpl(tp),
+        MapLit ml => printMap(ml),
+        StructLit sl => printStruct(sl),
         _ => "?"
     };
 }
@@ -532,6 +954,15 @@ fn ifStr(f: IfStmt): string {
     if (f.elseB.len() > 0) { s = concat(concat(s, " "), printBlock(f.elseB)); }
     return concat(s, ")");
 }
+fn forStr(f: ForStmt): string {
+    let ini: string = "_";
+    if (f.hasInit) { ini = printStmt(f.init); }
+    let cnd: string = "_";
+    if (f.hasCond) { cnd = printExpr(f.cond); }
+    let upd: string = "_";
+    if (f.hasUpdate) { upd = printStmt(f.update); }
+    return `(for ${ini} ${cnd} ${upd} ${printBlock(f.body)})`;
+}
 
 fn printStmt(s: Stmt): string {
     return match (s) {
@@ -540,6 +971,8 @@ fn printStmt(s: Stmt): string {
         ReturnStmt r => retStr(r),
         IfStmt f => ifStr(f),
         WhileStmt w => `(while ${printExpr(w.cond)} ${printBlock(w.body)})`,
+        ForOfStmt fo => `(forof ${fo.name} ${printExpr(fo.iter)} ${printBlock(fo.body)})`,
+        ForStmt fr => forStr(fr),
         BreakStmt b => "(break)",
         ContinueStmt c => "(continue)",
         ExprStmt e => printExpr(e.expr),
@@ -560,6 +993,40 @@ fn printFunc(f: Func): string {
     return `(fn ${f.name} (${ps}) ${f.ret}${bang} ${printBlock(f.body)})`;
 }
 
+// ── impressão das declarações de topo ────────────────────────────────────────
+fn printImport(im: Import): string {
+    let s: string = "(import (";
+    let first: bool = true;
+    for (const nm of im.names) {
+        if (!first) { s = concat(s, " "); }
+        s = concat(s, nm); first = false;
+    }
+    return concat(s, `) "${im.module}")`);
+}
+fn printEnum(en: EnumDecl): string {
+    let s: string = concat("(enum ", en.name);
+    for (const v of en.variants) { s = concat(s, concat(" ", v)); }
+    return concat(s, ")");
+}
+fn printField(f: ClassField): string { return `(field ${f.name} ${f.ty})`; }
+fn printClass(c: ClassDecl): string {
+    let par: string = "_";
+    if (!strEq(c.parent, "")) { par = c.parent; }
+    let s: string = `(class ${c.name} ${par}`;
+    for (const f of c.fields) { s = concat(s, concat(" ", printField(f))); }
+    for (const m of c.methods) { s = concat(s, concat(" ", printFunc(m))); }
+    return concat(s, ")");
+}
+fn printProgram(p: Program): string {
+    let s: string = "(program";
+    for (const im of p.imports) { s = concat(s, concat(" ", printImport(im))); }
+    for (const en of p.enums) { s = concat(s, concat(" ", printEnum(en))); }
+    for (const c of p.classes) { s = concat(s, concat(" ", printClass(c))); }
+    for (const fnc of p.funcs) { s = concat(s, concat(" ", printFunc(fnc))); }
+    if (p.main.len() > 0) { s = concat(s, concat(" ", printBlock(p.main))); }
+    return concat(s, ")");
+}
+
 // ── conveniências pros testes ────────────────────────────────────────────────
 fn parseExprStr(src: string): string {
     const p: Parser = new Parser(lexSrc(src));
@@ -572,4 +1039,8 @@ fn parseStmtStr(src: string): string {
 fn parseFuncStr(src: string): string {
     const p: Parser = new Parser(lexSrc(src));
     return printFunc(p.parseFunc());
+}
+fn parseModuleStr(src: string): string {
+    const p: Parser = new Parser(lexSrc(src));
+    return printProgram(p.parseModule());
 }

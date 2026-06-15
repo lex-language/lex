@@ -1,7 +1,7 @@
 // Testes do parser-em-lex (Fase 2). Rode com:  lex test selfhost
 // Cada caso parseia uma expressão e confere a AST renderizada como S-expression
 // (string → comparação robusta, sem depender de boxing de array em `any`).
-import { parseExprStr, parseStmtStr, parseFuncStr } from "./parser"
+import { parseExprStr, parseStmtStr, parseFuncStr, parseModuleStr } from "./parser"
 
 describe("parser de expressões", () => {
     test("precedência aritmética", () => {
@@ -48,6 +48,33 @@ describe("parser de expressões", () => {
     });
 });
 
+describe("parser de expressões (F6.1)", () => {
+    test("new", () => {
+        expect(parseExprStr("new Token(k, t)")).toBe("(new Token k t)");
+        expect(parseExprStr("new Codegen()")).toBe("(new Codegen)");
+    });
+
+    test("map e struct literal", () => {
+        expect(parseExprStr("{}")).toBe("(map)");
+        expect(parseExprStr("{\"a\": 1, \"b\": 2}")).toBe("(map \"a\" 1 \"b\" 2)");
+        expect(parseExprStr("{x: 1, y: 2}")).toBe("(struct x 1 y 2)");
+    });
+
+    test("match por tipo + curinga", () => {
+        expect(parseExprStr("match (e) { IntLit n => n.value, _ => 0 }"))
+            .toBe("(match e (IntLit n (. n value)) (_ 0))");
+        expect(parseExprStr("match (s) { LetStmt l => f(l), BreakStmt b => 1 }"))
+            .toBe("(match s (LetStmt l (call f l)) (BreakStmt b 1))");
+    });
+
+    test("template literal com ${}", () => {
+        expect(parseExprStr("`x=${a}`")).toBe("(tpl \"x=\" a)");
+        expect(parseExprStr("`${a}-${b}`")).toBe("(tpl a \"-\" b)");
+        expect(parseExprStr("`v=${f(1)}`")).toBe("(tpl \"v=\" (call f 1))");
+        expect(parseExprStr("`só texto`")).toBe("(tpl \"só texto\")");
+    });
+});
+
 describe("parser de statements", () => {
     test("let/const com e sem tipo", () => {
         expect(parseStmtStr("let x: i64 = 1 + 2")).toBe("(let x:i64 (+ 1 2))");
@@ -82,6 +109,18 @@ describe("parser de statements", () => {
         expect(parseStmtStr("while (i < 10) { i = i + 1 }"))
             .toBe("(while (< i 10) (do (= i (+ i 1))))");
     });
+
+    test("for-of", () => {
+        expect(parseStmtStr("for (const x of xs) { f(x) }"))
+            .toBe("(forof x xs (do (call f x)))");
+        expect(parseStmtStr("for (const t of toks) { g(t) h(t) }"))
+            .toBe("(forof t toks (do (call g t) (call h t)))");
+    });
+
+    test("for C-style", () => {
+        expect(parseStmtStr("for (let i: i64 = 0; i < n; i = i + 1) { g(i) }"))
+            .toBe("(for (let i:i64 0) (< i n) (= i (+ i 1)) (do (call g i)))");
+    });
 });
 
 describe("parser de funções", () => {
@@ -98,5 +137,40 @@ describe("parser de funções", () => {
         const src: string = "fn g(n: i64): i64 {\n  let x: i64 = n * 2\n  if (x > 10) { return x }\n  return 0\n}";
         expect(parseFuncStr(src))
             .toBe("(fn g (n:i64) i64 (do (let x:i64 (* n 2)) (if (> x 10) (do (return x))) (return 0)))");
+    });
+});
+
+describe("parser de módulo (F6.1)", () => {
+    test("import", () => {
+        expect(parseModuleStr("import { a, b } from \"./m\""))
+            .toBe("(program (import (a b) \"./m\"))");
+    });
+
+    test("enum", () => {
+        expect(parseModuleStr("enum Color { Red, Green, Blue }"))
+            .toBe("(program (enum Color Red Green Blue))");
+    });
+
+    test("class: campo, constructor e método", () => {
+        const src: string = "class Pt { x: i64  constructor(x: i64) { this.x = x }  get(): i64 { return this.x } }";
+        expect(parseModuleStr(src))
+            .toBe("(program (class Pt _ (field x i64) (fn constructor (x:i64) void (do (= (. this x) x))) (fn get () i64 (do (return (. this x))))))");
+    });
+
+    test("class com extends (herança)", () => {
+        expect(parseModuleStr("class Dog extends Animal { }"))
+            .toBe("(program (class Dog Animal))");
+    });
+
+    test("módulo completo: import + enum + class + fn", () => {
+        const src: string = "import { x } from \"./a\"\nenum E { A, B }\nclass C { n: i64 }\nfn main(): i64 { return 0 }";
+        expect(parseModuleStr(src))
+            .toBe("(program (import (x) \"./a\") (enum E A B) (class C _ (field n i64)) (fn main () i64 (do (return 0))))");
+    });
+
+    test("script-mode: statements de topo viram (main ...)", () => {
+        const src: string = "const x: i64 = 1\nTerminal.log(x)";
+        expect(parseModuleStr(src))
+            .toBe("(program (do (const x:i64 1) (. Terminal log x)))");
     });
 });

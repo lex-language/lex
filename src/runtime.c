@@ -1660,6 +1660,19 @@ char *__lex_fs_read(const char *path) {
     return buf;
 }
 
+// readStdin(n): lê até n bytes de stdin p/ a arena; NUL-terminado; "" no EOF.
+// Faz fflush(stdout) antes (padrão de servidor LSP: esvazia a resposta pendente
+// antes de bloquear lendo a próxima mensagem — senão o stdout bufferizado em
+// pipe trava o cliente). Só no alvo nativo-com-libc (como args/system).
+char *__lex_read_stdin(long long n) {
+    fflush(stdout);
+    if (n < 0) n = 0;
+    char *buf = lex_alloc((size_t)n + 1);
+    size_t rd = fread(buf, 1, (size_t)n, stdin);
+    buf[rd] = 0;
+    return buf;
+}
+
 // escreve/anexa texto (NUL-terminado); devolve bytes escritos ou -1
 static long long fs_put(const char *path, const char *data, int append) {
     FILE *f = fopen(path, append ? "ab" : "wb");

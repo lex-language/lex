@@ -89,6 +89,7 @@ const TABLE: &[Sig] = &[
     // --- host/CLI (self-hosting) -----------------------------------------
     s("args", "__lex_args", 0),            // string[] (argv)
     s("system", "__lex_system", 1),        // i64 (status do comando)
+    s("readStdin", "__lex_read_stdin", 1), // string (até n bytes; "" no EOF)
 
     // --- canais entre threads --------------------------------------------
     s("channel", "__lex_chan_new", 0),
@@ -215,6 +216,7 @@ pub fn runtime_abi(sym: &str) -> (&'static [u8], bool) {
         "__lex_fs_open" => (b"p.", false),
         "__lex_args" => (b"", true),
         "__lex_system" => (b"p", false),
+        "__lex_read_stdin" => (b".", true),   // (i64 n) -> char*
 
         // --- canais ---
         "__lex_chan_new" => (b"", true),
