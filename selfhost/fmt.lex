@@ -144,13 +144,6 @@ fn formatSource(src: string): string {
     // remove linhas em branco do fim
     while (out.len() > 0 && len(out[out.len() - 1]) == 0) { out.pop(); }
 
-    // junta com '\n' e garante exatamente uma quebra no fim
-    let result: string = "";
-    let first: bool = true;
-    for (const l of out) {
-        if (!first) { result = concat(result, "\n"); }
-        result = concat(result, l);
-        first = false;
-    }
-    return concat(result, "\n");
+    // junta com '\n' (1x, StrBuf O(n)) e garante exatamente uma quebra no fim
+    return concat(out.join("\n"), "\n");
 }
