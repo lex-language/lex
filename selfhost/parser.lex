@@ -892,6 +892,32 @@ class Parser {
 
     // Programa completo: imports + enums + classes + funções. (type/interface/
     // declare e statements de topo ainda são pulados — TODO.)
+    // consome `{ ... }` balanceado a partir do `{` atual (p/ erasure de decls).
+    skipBalanced() {
+        this.advance();                              // {
+        let depth: i64 = 1;
+        while (depth > 0 && this.peekKind() != Tok.Eof) {
+            const k: Tok = this.peekKind();
+            if (k == Tok.LBrace) { depth = depth + 1; }
+            else if (k == Tok.RBrace) { depth = depth - 1; }
+            this.advance();
+        }
+    }
+    // pula uma declaração não modelada no codegen (interface/type/declare): são
+    // erasure (contratos/aliases checados só pelo Rust). Consome até o corpo
+    // `{...}` balanceado, ou até `;`/próximo top-level se não houver corpo.
+    skipModuleDecl() {
+        this.advance();                              // interface / type / declare
+        while (true) {
+            const k: Tok = this.peekKind();
+            if (k == Tok.Eof) { return; }
+            if (k == Tok.LBrace) { this.skipBalanced(); return; }
+            if (k == Tok.Semicolon) { this.advance(); return; }
+            if (k == Tok.Import || k == Tok.Enum || k == Tok.Class || k == Tok.Function) { return; }
+            this.advance();
+        }
+    }
+
     parseModule(): Program {
         let imports: Import[] = [];
         let enums: EnumDecl[] = [];
@@ -906,7 +932,7 @@ class Parser {
             else if (k == Tok.Class) { classes.push(this.parseClass()); }
             else if (k == Tok.Function) { funcs.push(this.parseFunc()); }
             else if (k == Tok.Type || k == Tok.Interface || k == Tok.Declare) {
-                this.advance();   // type/interface/declare: ainda não modelados (TODO)
+                this.skipModuleDecl();   // interface/type/declare: erasure (não geram código)
             }
             else { main.push(this.parseStmt()); }   // statement de topo (script-mode)
         }

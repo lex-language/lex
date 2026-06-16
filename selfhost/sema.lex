@@ -298,6 +298,10 @@ fn builtinFnRet(name: string): string {
     if (strEq(name, "parseFloat")) { return "f64"; }
     if (strEq(name, "jsonAsFloat")) { return "f64"; }   // extrator de any → f64
     if (strEq(name, "fabs")) { return "f64"; }
+    if (strEq(name, "sqrt") || strEq(name, "pow") || strEq(name, "floor")
+        || strEq(name, "ceil") || strEq(name, "round") || strEq(name, "sin")
+        || strEq(name, "cos") || strEq(name, "tan") || strEq(name, "exp")
+        || strEq(name, "ln") || strEq(name, "log10")) { return "f64"; }
     if (strEq(name, "peek8")) { return "i64"; }
     if (strEq(name, "readFile")) { return "string"; }
     if (strEq(name, "writeFile")) { return "i64"; }
@@ -462,6 +466,9 @@ class Sema {
         if (strEq(m.method, "push")) { return "void"; }
         if (strEq(m.method, "pop")) { return elementTy(bt); }
         if (strEq(m.method, "charAt") || strEq(m.method, "substring")) { return "string"; }
+        if (strEq(m.method, "join")) { return "string"; }   // string[].join(sep) → string
+        if (strEq(m.method, "trim") || strEq(m.method, "toLower") || strEq(m.method, "toUpper")
+            || strEq(m.method, "replace")) { return "string"; }
         if (isClassTy(bt)) { return this.methodRet(bt, m.method); }
         return "?";
     }

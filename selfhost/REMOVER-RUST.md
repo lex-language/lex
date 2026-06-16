@@ -22,8 +22,16 @@ Esforço grande, várias sessões. Cada item mantém ponto-fixo + 14/14 testes v
   unboxing do harness (`toBeCloseTo`) ir pro caminho float certo.
 - [x] **compound-assign** no parser: `+= -= *= /= %=` e `++ -- ` (desaçucara p/
   `e = e <op> v`), em statements e no update do `for` C-style.
-- [ ] parser: `interface` (declaração, erasure no codegen)
-- [ ] parser: ternário `c ? a : b`
+- [x] **perf/memória**: a IR deixou de ser montada por `concat` O(n²) (que pedia
+  ~1.75 GB e 13s p/ recompilar o `lexcli`); agora acumula `string[]` e junta 1x
+  via `__lex_arr_join` (StrBuf O(n)) → ~45 MB e 0.6s. Ponto-fixo idêntico.
+- [x] **math f64**: `sqrt/pow/floor/ceil/round/sin/cos/tan/exp/ln/log10` (builtins
+  → `__lex_f_*`, retorno `f64` na sema).
+- [x] **métodos de string/array**: `join`, `trim`, `toLower`, `toUpper`, `replace`.
+- [x] parser: `interface`/`type`/`declare` como **erasure** (consome o corpo
+  `{...}` balanceado; não geram código). exemplo.lex já passa do `interface`.
+- [ ] parser/codegen: `super(...)` em construtores de subclasse
+- [ ] parser: ternário `c ? a : b` (lexer ainda não tokeniza `?`)
 - [ ] parser: optional-chaining `?.` e struct-literal `T { campo: v }`
 - [ ] parser/codegen: `try/catch`, `fail`, `defer`
 - [ ] parser/codegen: `spawn`, `async`/`await`

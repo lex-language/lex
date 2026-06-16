@@ -94,6 +94,18 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "gget")) { return "__lex_gget"; }
     if (strEq(name, "gset")) { return "__lex_gset"; }
     if (strEq(name, "fabs")) { return "__lex_f_abs"; }
+    // math f64 (arg/retorno em bits-de-double num i64; ver runtime.c)
+    if (strEq(name, "sqrt")) { return "__lex_f_sqrt"; }
+    if (strEq(name, "pow")) { return "__lex_f_pow"; }
+    if (strEq(name, "floor")) { return "__lex_f_floor"; }
+    if (strEq(name, "ceil")) { return "__lex_f_ceil"; }
+    if (strEq(name, "round")) { return "__lex_f_round"; }
+    if (strEq(name, "sin")) { return "__lex_f_sin"; }
+    if (strEq(name, "cos")) { return "__lex_f_cos"; }
+    if (strEq(name, "tan")) { return "__lex_f_tan"; }
+    if (strEq(name, "exp")) { return "__lex_f_exp"; }
+    if (strEq(name, "ln")) { return "__lex_f_ln"; }
+    if (strEq(name, "log10")) { return "__lex_f_log10"; }
     return "";
 }
 
@@ -142,7 +154,7 @@ fn collectIf(f: IfStmt, names: string[]): i64 {
 }
 
 class Codegen {
-    out: string
+    outParts: string[] // pedaços da IR (juntados 1x no fim — evita concat O(n²))
     tmp: i64           // contador de temporários SSA (%tN)
     lbl: i64           // contador de labels (LN)
     term: bool         // o bloco básico atual já terminou (ret/br)?
@@ -160,7 +172,7 @@ class Codegen {
     curLocals: string[]   // locais (alloca) da função atual — sombreiam globais
 
     constructor(sema: Sema) {
-        this.out = ""
+        this.outParts = []
         this.tmp = 0
         this.lbl = 0
         this.term = false
@@ -181,11 +193,11 @@ class Codegen {
     // instrução normal: pulada se o bloco já terminou (código morto)
     emit(line: string) {
         if (this.term) { return; }
-        this.out = concat(this.out, concat(line, "\n"));
+        this.outParts.push(concat(line, "\n"));
     }
     // linha estrutural (define/label/}): sempre escrita
     raw(line: string) {
-        this.out = concat(this.out, concat(line, "\n"));
+        this.outParts.push(concat(line, "\n"));
     }
     newTmp(): string {
         const r: string = concat("%t", str(this.tmp));
@@ -198,7 +210,7 @@ class Codegen {
         return r;
     }
     label(name: string) {            // inicia um novo bloco básico
-        this.out = concat(this.out, concat(name, ":\n"));
+        this.outParts.push(concat(name, ":\n"));
         this.term = false;
     }
 
@@ -540,10 +552,25 @@ class Codegen {
         if (strEq(m.method, "pop")) {
             return this.emitCall("__lex_arr_pop", concat("i64 ", bv));
         }
+        if (strEq(m.method, "join")) {                     // string[].join(sep) → string
+            let sep: string = this.genStrLit("");
+            if (m.args.len() >= 1) { sep = this.genExpr(m.args[0]); }
+            return this.emitCall("__lex_arr_join", `i64 ${bv}, i64 ${sep}`);
+        }
         // métodos de string (s.contains(x)/startsWith/endsWith)
         if (strEq(m.method, "contains")) { return this.strMethod1("__lex_contains", bv, m.args); }
         if (strEq(m.method, "startsWith")) { return this.strMethod1("__lex_starts_with", bv, m.args); }
         if (strEq(m.method, "endsWith")) { return this.strMethod1("__lex_ends_with", bv, m.args); }
+        if (strEq(m.method, "trim")) { return this.emitCall("__lex_trim", concat("i64 ", bv)); }
+        if (strEq(m.method, "toLower")) { return this.emitCall("__lex_to_lower", concat("i64 ", bv)); }
+        if (strEq(m.method, "toUpper")) { return this.emitCall("__lex_to_upper", concat("i64 ", bv)); }
+        if (strEq(m.method, "replace")) {                  // s.replace(frm, to) → string
+            let frm: string = this.genStrLit("");
+            let to: string = this.genStrLit("");
+            if (m.args.len() >= 1) { frm = this.genExpr(m.args[0]); }
+            if (m.args.len() >= 2) { to = this.genExpr(m.args[1]); }
+            return this.emitCall("__lex_str_replace", `i64 ${bv}, i64 ${frm}, i64 ${to}`);
+        }
         // método de classe: dispatch estático @Dono.metodo(this, args…)
         if (isClassTy(baseTy) && this.sema.classes.findInfo(baseTy) >= 0) {
             const owner: string = this.sema.classes.methodOwner(baseTy, m.method);
@@ -1063,6 +1090,11 @@ class Codegen {
         this.raw("declare i64 @__lex_arr_len(i64)");
         this.raw("declare i64 @__lex_arr_push(i64, i64)");
         this.raw("declare i64 @__lex_arr_pop(i64)");
+        this.raw("declare i64 @__lex_arr_join(i64, i64)");
+        this.raw("declare i64 @__lex_trim(i64)");
+        this.raw("declare i64 @__lex_to_lower(i64)");
+        this.raw("declare i64 @__lex_to_upper(i64)");
+        this.raw("declare i64 @__lex_str_replace(i64, i64, i64)");
         this.raw("declare i64 @__lex_arr_get(i64, i64)");
         this.raw("declare i64 @__lex_arr_set(i64, i64, i64)");
         this.raw("declare i64 @__lex_map_new()");
@@ -1088,6 +1120,17 @@ class Codegen {
         this.raw("declare i64 @__lex_gget(i64)");
         this.raw("declare i64 @__lex_gset(i64, i64)");
         this.raw("declare i64 @__lex_f_abs(i64)");
+        this.raw("declare i64 @__lex_f_sqrt(i64)");
+        this.raw("declare i64 @__lex_f_pow(i64, i64)");
+        this.raw("declare i64 @__lex_f_floor(i64)");
+        this.raw("declare i64 @__lex_f_ceil(i64)");
+        this.raw("declare i64 @__lex_f_round(i64)");
+        this.raw("declare i64 @__lex_f_sin(i64)");
+        this.raw("declare i64 @__lex_f_cos(i64)");
+        this.raw("declare i64 @__lex_f_tan(i64)");
+        this.raw("declare i64 @__lex_f_exp(i64)");
+        this.raw("declare i64 @__lex_f_ln(i64)");
+        this.raw("declare i64 @__lex_f_log10(i64)");
         this.raw("");
         // métodos de classe (dispatch estático): @Classe.metodo(i64 %this, …)
         for (const c of prog.classes) {
@@ -1112,7 +1155,7 @@ fn compileProgramToIR(prog: Program): string {
     const sema: Sema = new Sema(prog);
     const cg: Codegen = new Codegen(sema);
     cg.genProgram(prog);
-    return cg.out;
+    return cg.outParts.join("");   // junta toda a IR de uma vez (StrBuf O(n))
 }
 
 // Conveniência: fonte lex (um módulo) → texto do LLVM IR.
