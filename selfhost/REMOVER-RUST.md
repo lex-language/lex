@@ -5,10 +5,13 @@ auto-hospedado** (ponto-fixo provado por `bootstrap.sh`) e **8 ferramentas** est
 portadas e testadas/smoke — fmt, TOML, semver, pkg(manifesto), JSON, diag, LSP,
 e o `lex` unificado (`lexcli.lex`). ~4.500 linhas de lex, 300 asserções verdes.
 
-**Teste de aceitação da meta** ("Rust eliminado"): buildar um `lex` **stage0** em
-lex (via Rust, uma última vez), e então **deletar `src/`** com:
-1. `./stage0 test selfhost` passando (suíte verde sem o Rust), e
-2. `./stage0` recompilando a si mesmo (`bootstrap` sob o stage0, ponto-fixo).
+**Teste de aceitação da meta** ("Rust eliminado") — ✅ **DEMONSTRADO** (`selfhost/seed.sh`):
+o `lex` **stage0** (lexcli, buildado uma última vez pelo Rust) faz `run`/`test`/`check`/
+`fmt` **sem Rust** e **se reconstrói** (stage0 → stage1, que roda). Logo o `src/` pode
+ser arquivado — basta guardar o binário stage0 (ou um branch de arquivo do Rust).
+Falta p/ PARIDADE 100% (não bloqueiam a semente): wasm32 (codegen ptr-aware),
+cross p/ linux/windows (sysroots), `check` semântico completo (tipo/aridade), pkg
+transitivo/publish/registry-HTTP.
 
 > Nota: o `runtime.c` continua **C** (compilado pelo clang) — "remover Rust" ≠
 > "remover C". Até o `lex` de produção embute `runtime.c` e usa clang como linker.
@@ -151,9 +154,10 @@ dependência, a sema-em-lex precisa emitir diagnósticos.
 > `checker.lex`, `lspserver.lex`, `pkgcmd.lex`); os drivers (`lextest`/`lexcheck`/
 > `lexlsp`/`lexpkg`) ficaram finos e reusam os módulos. O `lexlsp`/`lex lsp` usa o
 > `lexcheck` (sem Rust). *Smoke*: `lex test/check/run/build/fmt/version`, `lex pkg
-> init/add/list`, `lex lsp` (handshake). **FALTA p/ paridade total**: `--target`/
-> wasm/cross-compile, fetch de rede do pkg, demais flags do `main.rs`, resolução de
-> `std/` subindo diretórios (hoje relativo à raiz do repo), `--watch`.
+> init/add/list`, `lex lsp`. **FEITO depois**: `--target` (cross macOS x64/arm64),
+> `--watch`, resolução de `std/`+`runtime.c` subindo diretórios, `check` com erros
+> de sintaxe, pkg `add/install` com fetch git. **FALTA**: wasm32/linux/win cross
+> (ptr-codegen/sysroots), demais flags do `main.rs`, `check` de tipo/aridade.
 
 - Espelhar `src/main.rs`: flags, `--target`, `-o`, resolução de `std/` (subir
   diretórios achando `std/` — já existe no Rust, portar a `resolve_module`/
@@ -162,7 +166,14 @@ dependência, a sema-em-lex precisa emitir diagnósticos.
 - **Espelha:** `src/main.rs` (dispatch + resolução de módulos).
 - **Validar:** rodar os mesmos comandos do dia a dia e comparar com o `lex` Rust.
 
-## Fase G — pkg: fetch/publish (rede)  ·  esforço: M  (depende de F6.8-A/B já prontos)
+## Fase G — pkg: fetch/publish (rede)  ·  esforço: M  ·  🟡 FETCH FEITO
+> **FEITO**: `pkg add <git-url>` e `pkg install` fazem o FETCH real — `gitTags`
+> (`ls-remote --tags`), `semverPickBest` p/ a tag, `clone --depth 1 [--branch]`,
+> `rev-parse HEAD` p/ o commit, remove `.git`, e grava `[[package]]` no `lex.lock`
+> (via `toml.lex`). Smoke real: `pkg add github.com/octocat/Hello-World` → clona em
+> `lex_modules/`, commit + lock. **FALTA**: resolução transitiva + prune de órfãos,
+> `publish`/`registry` (HTTP via `curl`), `update`.
+
 - `install`/`update`/`add`(com fetch)/`publish`/`registry`. Usa `system()` com
   redirecionamento p/ capturar saída de `git`/`curl` (`git ls-remote --tags`,
   `clone --depth 1`, `rev-parse HEAD`, `checkout`; `curl -fsSL`/`-X POST`).
@@ -171,21 +182,22 @@ dependência, a sema-em-lex precisa emitir diagnósticos.
 - **Espelha:** `src/pkg.rs` (resta ~o grosso da lógica de rede/resolução).
 - **Validar:** smoke clonando um repo público pequeno; lock reprodutível.
 
-## Fase H — wasm + cross-compile  ·  esforço: L
-- Emissão por triple, flags de `wasm-ld`/`clang --target`, runtime por alvo
-  (freestanding/wasm), import libs do Windows. O codegen textual já existe; é
-  orquestração de toolchain + os flags certos por alvo.
-- **Espelha:** `src/wasm_host.rs` + a lógica de target em `src/main.rs`/`src/codegen.rs`.
-- **Validar:** compilar p/ wasm32 e rodar via wasmi/Node; cross p/ linux-x64 e rodar.
+## Fase H — wasm + cross-compile  ·  esforço: L  ·  🟡 CROSS macOS FEITO
+> **FEITO**: `lex build --target macos-x64|macos-arm64` (clang `-arch`) — cross
+> macOS x64↔arm64 no mesmo SO (smoke: arm64 gera Mach-O x86_64 que roda). **FALTA**:
+> **wasm32** exige codegen PTR-AWARE (no wasm um ponteiro é i32; o codegen self-hosted
+> emite i64 p/ tudo — o Rust marca slots `ptr` via `runtime_abi`, falta espelhar);
+> **linux/windows** exigem sysroots/import-libs (não orquestrados em lex ainda).
+> Espelha `src/wasm_host.rs` + target em `src/main.rs`/`src/codegen.rs`.
 
-## Fase I — Semente (stage0) + deletar `src/`  ·  esforço: S  (depende de tudo acima)
-1. Buildar o `lex` unificado em lex com o Rust, uma última vez:
-   `lex build selfhost/lexcli.lex -o lex-stage0` (quando `lexcli` cobrir
-   build/run/check/test/fmt/lsp/pkg).
-2. Commitar `lex-stage0` (binário) **e** o `runtime.c`.
-3. Rodar o teste de aceitação (topo deste doc) sob o stage0.
-4. Arquivar/deletar `src/` (e o `Cargo.toml`/inkwell). A partir daí, o stage0
-   reconstrói o compilador a partir de `selfhost/*.lex`.
+## Fase I — Semente (stage0)  ·  esforço: S  ·  ✅ DEMONSTRADO (`selfhost/seed.sh`)
+> **FEITO**: `seed.sh` builda o `lex-stage0` (lexcli, via Rust uma última vez) e
+> prova que ele faz `run`/`test`/`check`/`fmt` SEM Rust e **se reconstrói**
+> (stage0 → stage1, que roda). Auto-suficiência comprovada.
+> **Pra de fato deletar o `src/`**: commitar o binário `lex-stage0` (+ `runtime.c`)
+> ou manter um branch de arquivo do Rust; então arquivar `src/`+`Cargo.toml`. (É uma
+> decisão do projeto — o COMMIT de binário é o único passo manual que falta; a prova
+> técnica está completa.)
 
 ---
 

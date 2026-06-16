@@ -77,6 +77,7 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "system")) { return "__lex_system"; }
     if (strEq(name, "args")) { return "__lex_args"; }
     if (strEq(name, "exists")) { return "__lex_fs_exists"; }
+    if (strEq(name, "readStdin")) { return "__lex_read_stdin"; }
     if (strEq(name, "mapGet")) { return "__lex_map_get"; }
     if (strEq(name, "mapSet")) { return "__lex_map_set"; }
     // json / any (boxing comparado por valor)
@@ -1024,6 +1025,7 @@ class Codegen {
         this.raw("declare i64 @__lex_fs_read(i64)");
         this.raw("declare i64 @__lex_fs_write(i64, i64)");
         this.raw("declare i64 @__lex_fs_exists(i64)");
+        this.raw("declare i64 @__lex_read_stdin(i64)");
         this.raw("declare i64 @__lex_system(i64)");
         this.raw("declare i64 @__lex_args()");
         this.raw("declare i64 @__lex_json_num(i64)");
