@@ -36,17 +36,37 @@ fn buildFile(file: string, out: string): i64 {
     return 0;
 }
 
+// recompila ao mudar o arquivo (poll de conteúdo a cada 1s — não há builtin de
+// mtime/sleep, então usa system("sleep 1")). Roda até Ctrl-C.
+fn watchLoop(file: string, out: string): i64 {
+    Terminal.log("watching... (Ctrl-C p/ sair)");
+    let last: string = readFile(file);
+    while (true) {
+        system("sleep 1");
+        const cur: string = readFile(file);
+        if (!strEq(cur, last)) {
+            Terminal.log(`mudou: recompilando ${file}`);
+            buildFile(file, out);
+            last = cur;
+        }
+    }
+    return 0;
+}
+
 fn cmdBuild(av: string[]): i64 {
     let file: string = "";
     let out: string = "a.out";
+    let watch: bool = false;
     let i: i64 = 2;
     while (i < av.len()) {
         if (strEq(av[i], "-o") && i + 1 < av.len()) { out = av[i + 1]; i = i + 2; }
+        else if (strEq(av[i], "--watch")) { watch = true; i = i + 1; }
         else { file = av[i]; i = i + 1; }
     }
-    if (strEq(file, "")) { Terminal.log("uso: lex build <arquivo.lex> [-o saida]"); return 1; }
+    if (strEq(file, "")) { Terminal.log("uso: lex build <arquivo.lex> [-o saida] [--watch]"); return 1; }
     if (buildFile(file, out) != 0) { return 1; }
     Terminal.log(`ok: ${file} -> ${out}`);
+    if (watch) { return watchLoop(file, out); }
     return 0;
 }
 
