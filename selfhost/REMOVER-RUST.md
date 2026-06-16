@@ -8,18 +8,26 @@ e o `lex` unificado (`lexcli.lex`). ~4.500 linhas de lex, 300 asserções verdes
 > ⚠️ **REALIDADE: o compilador-em-lex é um compilador de SUBSET.** Ele cobre só o
 > subconjunto da linguagem em que ele próprio é escrito — compila a si mesmo
 > (`bootstrap.sh`, ponto-fixo) e a suíte `tests/`, e **se reconstrói sem Rust**
-> (`seed.sh`). MAS **NÃO compila programas de linguagem completa**: `bin/lex
-> examples/exemplo.lex` falha (o parser bate em `try/catch`, `spawn`, `async`,
-> struct-literal, ternário, optional-chaining, compound-assign…; e o codegen não
-> faz aritmética f64). Portanto **o `src/` (Rust) NÃO pode ser aposentado ainda** —
-> ele é o ÚNICO compilador de linguagem-completa (e o único com wasm/cross/float).
+> (`seed.sh`). MAS **ainda NÃO compila programas de linguagem completa**: `bin/lex
+> examples/exemplo.lex` falha (o parser bate em `interface`, `try/catch`, `spawn`,
+> `async`, struct-literal, ternário, optional-chaining…). Portanto **o `src/`
+> (Rust) NÃO pode ser aposentado ainda** — ele é o ÚNICO compilador de linguagem-
+> completa (e o único com wasm/cross).
 
-**O que falta p/ realmente aposentar o `src/`** (além de wasm/cross/`check`-de-tipo):
-portar pro self-hostado TODO o resto da linguagem que os programas reais usam —
-parser de `try/catch`/`spawn`/`async`/`await`/struct-literal/ternário/optional-
-chaining/compound-assign, e **aritmética f64** no codegen. É um esforço grande
-(o parser/codegen self-hostado hoje param no subset). Sem isso, remover o Rust
-quebra `examples/exemplo.lex` e qualquer programa fora do subset.
+### Port da linguagem completa — progresso (rumo a aposentar o Rust)
+Esforço grande, várias sessões. Cada item mantém ponto-fixo + 14/14 testes verdes.
+- [x] **aritmética f64** no codegen (`fadd/fsub/fmul/fdiv/frem` + `fcmp`, via
+  bitcast i64↔double; `sitofp` p/ misturar int e float). Conserta `math.test.lex`.
+- [x] tipos de retorno float na sema (`jsonAsFloat`/`fabs` → `f64`) p/ o boxing/
+  unboxing do harness (`toBeCloseTo`) ir pro caminho float certo.
+- [x] **compound-assign** no parser: `+= -= *= /= %=` e `++ -- ` (desaçucara p/
+  `e = e <op> v`), em statements e no update do `for` C-style.
+- [ ] parser: `interface` (declaração, erasure no codegen)
+- [ ] parser: ternário `c ? a : b`
+- [ ] parser: optional-chaining `?.` e struct-literal `T { campo: v }`
+- [ ] parser/codegen: `try/catch`, `fail`, `defer`
+- [ ] parser/codegen: `spawn`, `async`/`await`
+- [ ] meta: `bin/lex examples/exemplo.lex` compila e roda
 
 > Nota: o `runtime.c` continua **C** (compilado pelo clang) — "remover Rust" ≠
 > "remover C". Até o `lex` de produção embute `runtime.c` e usa clang como linker.

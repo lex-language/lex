@@ -641,6 +641,27 @@ class Parser {
         return body;
     }
 
+    // operador binário equivalente de um composto (`+=`→`+`); Tok.Eof = não é composto.
+    compoundOp(k: Tok): Tok {
+        if (k == Tok.PlusEq) { return Tok.Plus; }
+        if (k == Tok.MinusEq) { return Tok.Minus; }
+        if (k == Tok.StarEq) { return Tok.Star; }
+        if (k == Tok.SlashEq) { return Tok.Slash; }
+        if (k == Tok.PercentEq) { return Tok.Percent; }
+        return Tok.Eof;
+    }
+    // após um lvalue `e`, trata `=`, compostos (`+=`…) e `++`/`--`, desaçucarando
+    // `e += v` → `e = e + v` e `e++` → `e = e + 1`. Não consome ';'.
+    opAssignStmt(e: Expr): Stmt {
+        const k: Tok = this.peekKind();
+        if (k == Tok.Eq) { this.advance(); return new AssignStmt(e, this.parseExpr()); }
+        if (k == Tok.PlusPlus) { this.advance(); return new AssignStmt(e, new Binary(Tok.Plus, e, new IntLit(1))); }
+        if (k == Tok.MinusMinus) { this.advance(); return new AssignStmt(e, new Binary(Tok.Minus, e, new IntLit(1))); }
+        const co: Tok = this.compoundOp(k);
+        if (co != Tok.Eof) { this.advance(); return new AssignStmt(e, new Binary(co, e, this.parseExpr())); }
+        return new ExprStmt(e);
+    }
+
     parseStmt(): Stmt {
         const k: Tok = this.peekKind();
         if (k == Tok.Const || k == Tok.Let) { return this.parseLet(); }
@@ -650,16 +671,11 @@ class Parser {
         if (k == Tok.For) { return this.parseFor(); }
         if (k == Tok.Break) { this.advance(); this.eatSemi(); return new BreakStmt(); }
         if (k == Tok.Continue) { this.advance(); this.eatSemi(); return new ContinueStmt(); }
-        // default: expr-statement ou atribuição (`lvalue = expr`)
+        // default: expr-statement ou atribuição (`lvalue [op]= expr`, `lvalue++`)
         const e: Expr = this.parseExpr();
-        if (this.peekKind() == Tok.Eq) {
-            this.advance();
-            const v: Expr = this.parseExpr();
-            this.eatSemi();
-            return new AssignStmt(e, v);
-        }
+        const s: Stmt = this.opAssignStmt(e);
         this.eatSemi();
-        return new ExprStmt(e);
+        return s;
     }
 
     parseLet(): Stmt {
@@ -727,12 +743,7 @@ class Parser {
             return new LetStmt(name, ty, mutable, value);
         }
         const e: Expr = this.parseExpr();
-        if (this.peekKind() == Tok.Eq) {
-            this.advance();
-            const v: Expr = this.parseExpr();
-            return new AssignStmt(e, v);
-        }
-        return new ExprStmt(e);
+        return this.opAssignStmt(e);
     }
 
     // `for (const x of iter) { ... }` (for-of) ou `for (init; cond; update) {...}`

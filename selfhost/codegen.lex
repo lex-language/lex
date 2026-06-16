@@ -279,6 +279,10 @@ class Codegen {
     }
 
     genBinary(b: Binary): string {
+        // aritmética/comparação f64: se qualquer operando é f64, vai pro caminho float.
+        const lt: string = this.sema.typeOf(b.lhs, this.scope);
+        const rt: string = this.sema.typeOf(b.rhs, this.scope);
+        if (strEq(lt, "f64") || strEq(rt, "f64")) { return this.genFloatBin(b, lt, rt); }
         const l: string = this.genExpr(b.lhs);
         const r: string = this.genExpr(b.rhs);
         const op: Tok = b.op;
@@ -302,6 +306,50 @@ class Codegen {
         // lógicos (sem curto-circuito por ora: normaliza p/ 0/1 e and/or — TODO)
         if (op == Tok.AmpAmp) { return this.bin("and", this.truth(l), this.truth(r)); }
         if (op == Tok.PipePipe) { return this.bin("or", this.truth(l), this.truth(r)); }
+        return "0";
+    }
+
+    // operando f64: f64 trafega como bits-do-double num i64 → bitcast p/ double;
+    // um i64 numérico vira double via sitofp (permite misturar int e float).
+    toDouble(v: string, ty: string): string {
+        const t: string = this.newTmp();
+        if (strEq(ty, "f64")) { this.emit(`  ${t} = bitcast i64 ${v} to double`); }
+        else { this.emit(`  ${t} = sitofp i64 ${v} to double`); }
+        return t;
+    }
+    // op aritmético float → resultado double rebitcastado p/ i64 (modelo do runtime).
+    fbin(opc: string, ld: string, rd: string): string {
+        const t: string = this.newTmp();
+        this.emit(`  ${t} = ${opc} double ${ld}, ${rd}`);
+        const ti: string = this.newTmp();
+        this.emit(`  ${ti} = bitcast double ${t} to i64`);
+        return ti;
+    }
+    // comparação float → i1 ampliado p/ i64 (0/1).
+    fcmp(pred: string, ld: string, rd: string): string {
+        const c: string = this.newTmp();
+        this.emit(`  ${c} = fcmp ${pred} double ${ld}, ${rd}`);
+        const t: string = this.newTmp();
+        this.emit(`  ${t} = zext i1 ${c} to i64`);
+        return t;
+    }
+    genFloatBin(b: Binary, lt: string, rt: string): string {
+        const lv: string = this.genExpr(b.lhs);
+        const rv: string = this.genExpr(b.rhs);
+        const ld: string = this.toDouble(lv, lt);
+        const rd: string = this.toDouble(rv, rt);
+        const op: Tok = b.op;
+        if (op == Tok.Plus) { return this.fbin("fadd", ld, rd); }
+        if (op == Tok.Minus) { return this.fbin("fsub", ld, rd); }
+        if (op == Tok.Star) { return this.fbin("fmul", ld, rd); }
+        if (op == Tok.Slash) { return this.fbin("fdiv", ld, rd); }
+        if (op == Tok.Percent) { return this.fbin("frem", ld, rd); }
+        if (op == Tok.EqEq) { return this.fcmp("oeq", ld, rd); }
+        if (op == Tok.Neq) { return this.fcmp("une", ld, rd); }
+        if (op == Tok.Lt) { return this.fcmp("olt", ld, rd); }
+        if (op == Tok.Gt) { return this.fcmp("ogt", ld, rd); }
+        if (op == Tok.Le) { return this.fcmp("ole", ld, rd); }
+        if (op == Tok.Ge) { return this.fcmp("oge", ld, rd); }
         return "0";
     }
 

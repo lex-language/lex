@@ -296,6 +296,8 @@ fn builtinFnRet(name: string): string {
     if (strEq(name, "str")) { return "string"; }
     if (strEq(name, "parseInt")) { return "i64"; }
     if (strEq(name, "parseFloat")) { return "f64"; }
+    if (strEq(name, "jsonAsFloat")) { return "f64"; }   // extrator de any → f64
+    if (strEq(name, "fabs")) { return "f64"; }
     if (strEq(name, "peek8")) { return "i64"; }
     if (strEq(name, "readFile")) { return "string"; }
     if (strEq(name, "writeFile")) { return "i64"; }
