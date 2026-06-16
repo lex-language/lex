@@ -121,6 +121,17 @@ class Lambda extends Expr {
     fnName: string
     constructor(fnName: string) { this.fnName = fnName }
 }
+// `try expr` — propaga o erro (sai da função atual se o callee falhou).
+class TryExpr extends Expr {
+    call: Expr
+    constructor(call: Expr) { this.call = call }
+}
+// `expr catch fallback` — se o callee falhou, limpa o erro e usa `handler`.
+class CatchExpr extends Expr {
+    lhs: Expr
+    handler: Expr
+    constructor(lhs: Expr, handler: Expr) { this.lhs = lhs; this.handler = handler }
+}
 
 // ── AST: statements e declarações ────────────────────────────────────────────
 class Stmt {}
@@ -187,6 +198,15 @@ class ForStmt extends Stmt {
         this.update = update; this.hasUpdate = hasUpdate
         this.body = body
     }
+}
+
+class FailStmt extends Stmt {
+    value: Expr
+    constructor(value: Expr) { this.value = value }
+}
+class DeferStmt extends Stmt {
+    body: Stmt          // statement adiado p/ a saída da função
+    constructor(body: Stmt) { this.body = body }
 }
 
 class Param {
@@ -339,7 +359,15 @@ class Parser {
     }
 
     // ── expressões ──────────────────────────────────────────────────────────
-    parseExpr(): Expr { return this.parseBin(1); }
+    // `catch` é o operador de menor precedência: `<expr> catch <fallback>`.
+    parseExpr(): Expr {
+        const e: Expr = this.parseBin(1);
+        if (this.peekKind() == Tok.Catch) {
+            this.advance();
+            return new CatchExpr(e, this.parseBin(1));
+        }
+        return e;
+    }
 
     // precedence climbing: associativo à esquerda (recursão com p+1)
     parseBin(minPrec: i64): Expr {
@@ -360,6 +388,10 @@ class Parser {
         if (k == Tok.Bang || k == Tok.Minus || k == Tok.Tilde) {
             this.advance();
             return new Unary(k, this.parseUnary());
+        }
+        if (k == Tok.Try) {                          // try <expr fallível> — propaga
+            this.advance();
+            return new TryExpr(this.parseUnary());
         }
         return this.parsePostfix();
     }
@@ -675,6 +707,16 @@ class Parser {
         if (k == Tok.For) { return this.parseFor(); }
         if (k == Tok.Break) { this.advance(); this.eatSemi(); return new BreakStmt(); }
         if (k == Tok.Continue) { this.advance(); this.eatSemi(); return new ContinueStmt(); }
+        if (k == Tok.Fail) {                         // fail expr — sinaliza erro e sai
+            this.advance();
+            const v: Expr = this.parseExpr();
+            this.eatSemi();
+            return new FailStmt(v);
+        }
+        if (k == Tok.Defer) {                        // defer stmt — adia p/ a saída
+            this.advance();
+            return new DeferStmt(this.parseStmt());
+        }
         // default: expr-statement ou atribuição (`lvalue [op]= expr`, `lvalue++`)
         const e: Expr = this.parseExpr();
         const s: Stmt = this.opAssignStmt(e);
@@ -790,6 +832,7 @@ class Parser {
     parseFunc(): Func {
         this.expect(Tok.Function);                   // fn / function
         const name: string = this.advance().text;
+        this.skipTypeArgs();                         // <T> genérico opcional (erasure)
         return this.parseSig(name);
     }
 

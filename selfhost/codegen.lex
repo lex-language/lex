@@ -24,8 +24,9 @@ import { lexSrc, Tok } from "./lexer"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call,
     ArrayLit, Field, MethodCall, Index, MapLit, Template, Match, Lambda,
+    TryExpr, CatchExpr,
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
-    ContinueStmt, ExprStmt, ForOfStmt, ForStmt, Func, Param, Program, Parser
+    ContinueStmt, ExprStmt, ForOfStmt, ForStmt, FailStmt, DeferStmt, Func, Param, Program, Parser
 } from "./parser"
 import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, elementTy, addUniq, idxOf, without } from "./sema"
 
@@ -171,10 +172,12 @@ class Codegen {
     globalNames: string[] // const/let de topo promovidos a slots globais (gget/gset)
     curLocals: string[]   // locais (alloca) da função atual — sombreiam globais
     curClass: string      // classe do método atual ("" fora de método) — p/ super(...)
+    curDefers: Stmt[]     // statements adiados (defer) — emitidos antes de cada ret
 
     constructor(sema: Sema) {
         this.outParts = []
         this.curClass = ""
+        this.curDefers = []
         this.tmp = 0
         this.lbl = 0
         this.term = false
@@ -735,6 +738,8 @@ class Codegen {
             Field f => this.genField(f),
             Match mt => this.genMatch(mt),
             Lambda lm => `ptrtoint (ptr @${lm.fnName} to i64)`,
+            TryExpr t => this.genTry(t),
+            CatchExpr c => this.genCatch(c),
             _ => "0"
         };
     }
@@ -768,9 +773,17 @@ class Codegen {
         };
     }
 
-    genReturn(r: ReturnStmt): i64 {
-        let val: string = "0";
-        if (r.hasValue) { val = this.genExpr(r.value); }
+    // emite os statements adiados (defer) em ordem LIFO. Chamado antes de cada
+    // ret — assim defer roda em qualquer saída (return/fail/try-propaga/fim).
+    flushDefers() {
+        let i: i64 = this.curDefers.len() - 1;
+        while (i >= 0) { this.genStmt(this.curDefers[i]); i = i - 1; }
+    }
+    genDefer(d: DeferStmt): i64 { this.curDefers.push(d.body); return 0; }
+
+    // retorna um i64 respeitando a convenção (main devolve i32 truncado).
+    emitReturnVal(val: string) {
+        this.flushDefers();
         if (this.curMain) {
             const t: string = this.newTmp();
             this.emit(`  ${t} = trunc i64 ${val} to i32`);
@@ -779,6 +792,18 @@ class Codegen {
             this.emit(`  ret i64 ${val}`);
         }
         this.term = true;
+    }
+    genReturn(r: ReturnStmt): i64 {
+        let val: string = "0";
+        if (r.hasValue) { val = this.genExpr(r.value); }
+        this.emitReturnVal(val);
+        return 0;
+    }
+    // fail expr: seta o flag de erro com o valor e sai da função (sentinela 0).
+    genFail(fs: FailStmt): i64 {
+        const v: string = this.genExpr(fs.value);
+        this.emit(`  call i64 @__lex_set_err(i64 ${v})`);
+        this.emitReturnVal("0");
         return 0;
     }
 
@@ -945,8 +970,55 @@ class Codegen {
             BreakStmt b => this.genBreak(),
             ContinueStmt c => this.genContinue(),
             ExprStmt e => this.genExprStmt(e),
+            FailStmt fs => this.genFail(fs),
+            DeferStmt d => this.genDefer(d),
             _ => 0
         };
+    }
+
+    // try <call>: avalia; se o callee setou o flag de erro, PROPAGA (retorna da
+    // função atual com o flag ainda setado). Senão, o valor é o do callee.
+    genTry(t: TryExpr): string {
+        const v: string = this.genExpr(t.call);
+        const id: i64 = this.matchN;
+        this.matchN = this.matchN + 1;
+        const lprop: string = concat("Ltprop", str(id));
+        const lok: string = concat("Ltok", str(id));
+        const has: string = this.emitCall("__lex_has_err", "");
+        const cb: string = this.newTmp();
+        this.emit(`  ${cb} = icmp ne i64 ${has}, 0`);
+        this.emit(`  br i1 ${cb}, label %${lprop}, label %${lok}`);
+        this.term = true;
+        this.label(lprop);
+        this.emitReturnVal("0");          // propaga (flag segue setado pro chamador)
+        this.label(lok);
+        return v;
+    }
+    // <lhs> catch <handler>: se lhs falhou, LIMPA o erro e usa handler; senão lhs.
+    genCatch(c: CatchExpr): string {
+        const id: i64 = this.matchN;
+        this.matchN = this.matchN + 1;
+        const ra: string = `%catch${id}.addr`;
+        this.emit(`  ${ra} = alloca i64`);
+        const v: string = this.genExpr(c.lhs);
+        this.emit(`  store i64 ${v}, ptr ${ra}`);
+        const lcatch: string = concat("Lcatch", str(id));
+        const lok: string = concat("Lcok", str(id));
+        const has: string = this.emitCall("__lex_has_err", "");
+        const cb: string = this.newTmp();
+        this.emit(`  ${cb} = icmp ne i64 ${has}, 0`);
+        this.emit(`  br i1 ${cb}, label %${lcatch}, label %${lok}`);
+        this.term = true;
+        this.label(lcatch);
+        this.emit(`  call i64 @__lex_take_err()`);   // consome/limpa o erro
+        const h: string = this.genExpr(c.handler);
+        this.emit(`  store i64 ${h}, ptr ${ra}`);
+        this.emit(`  br label %${lok}`);
+        this.term = true;
+        this.label(lok);
+        const r: string = this.newTmp();
+        this.emit(`  ${r} = load i64, ptr ${ra}`);
+        return r;
     }
 
     // match (subj) { Classe bind => corpo, _ => corpo } como EXPRESSÃO.
@@ -1008,6 +1080,7 @@ class Codegen {
         this.term = false;
         this.curMain = false;
         this.curClass = cls;         // p/ resolver super(...) ao pai
+        this.curDefers = [];
         this.scope = new Scope();
         this.scope.set("this", cls);
         for (const p of f.params) { this.scope.set(p.name, p.ty); }
@@ -1039,6 +1112,7 @@ class Codegen {
         this.term = false;
         this.curMain = strEq(f.name, "main");
         this.curClass = "";          // função livre: fora de classe
+        this.curDefers = [];
         this.scope = new Scope();
         for (const p of f.params) { this.scope.set(p.name, p.ty); }
 
@@ -1072,11 +1146,7 @@ class Codegen {
 
         this.genStmts(f.body);
 
-        if (!this.term) {
-            if (this.curMain) { this.emit("  ret i32 0"); }
-            else { this.emit("  ret i64 0"); }
-            this.term = true;
-        }
+        if (!this.term) { this.emitReturnVal("0"); }   // fall-through (roda defers)
         this.raw("}");
         this.raw("");
         return 0;
@@ -1116,6 +1186,9 @@ class Codegen {
         this.raw("declare i64 @__lex_arr_push(i64, i64)");
         this.raw("declare i64 @__lex_arr_pop(i64)");
         this.raw("declare i64 @__lex_arr_join(i64, i64)");
+        this.raw("declare i64 @__lex_set_err(i64)");
+        this.raw("declare i64 @__lex_has_err()");
+        this.raw("declare i64 @__lex_take_err()");
         this.raw("declare i64 @__lex_trim(i64)");
         this.raw("declare i64 @__lex_to_lower(i64)");
         this.raw("declare i64 @__lex_to_upper(i64)");

@@ -16,10 +16,12 @@ import { lexSrc, Tok } from "./lexer"
 import { Program, ClassDecl, ClassField, Func, Param, EnumDecl, Parser } from "./parser"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call, ArrayLit,
-    Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm, Lambda
+    Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm, Lambda,
+    TryExpr, CatchExpr
 } from "./parser"
 import {
-    Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, ForOfStmt, ForStmt, ExprStmt
+    Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, ForOfStmt, ForStmt, ExprStmt,
+    FailStmt, DeferStmt
 } from "./parser"
 
 // ── utilidades de conjunto de nomes (usadas pela sema E pelo codegen) ────────
@@ -425,6 +427,8 @@ class Sema {
             Index ix => this.typeIndex(ix, scope),
             Match mt => this.typeMatch(mt, scope),
             Lambda lm => "()=>?",
+            TryExpr t => this.typeOf(t.call, scope),    // try f() tem o tipo de f()
+            CatchExpr c => this.typeOf(c.lhs, scope),   // x catch y tem o tipo de x
             _ => "?"
         };
     }

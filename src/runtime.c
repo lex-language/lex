@@ -999,6 +999,22 @@ long long __lex_ends_with(const char *s, const char *suffix) {
     return strcmp(s + (ls - lf), suffix) == 0 ? 1 : 0;
 }
 
+// ── flag de erro p/ fail/try/catch do compilador self-hostado ────────────────
+// Modelo simples e fora-de-banda: `fail E` seta o flag e devolve sentinela; `try`
+// checa após a chamada e PROPAGA (retorna da função atual com o flag ainda setado);
+// `catch` checa, LIMPA e usa o fallback. Global por thread (erros não atravessam
+// spawn — suficiente p/ os caminhos atuais).
+static long long lex_err_flag = 0;
+static long long lex_err_val = 0;
+long long __lex_set_err(long long v) { lex_err_flag = 1; lex_err_val = v; return 0; }
+long long __lex_has_err(void) { return lex_err_flag; }
+long long __lex_take_err(void) {
+    long long v = lex_err_val;
+    lex_err_flag = 0;
+    lex_err_val = 0;
+    return v;
+}
+
 char *__lex_to_upper(const char *s) {
     char *r = lex_strdup(s);
     for (char *p = r; *p; p++) *p = (char)toupper((unsigned char)*p);

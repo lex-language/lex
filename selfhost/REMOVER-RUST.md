@@ -30,11 +30,19 @@ Esforço grande, várias sessões. Cada item mantém ponto-fixo + 14/14 testes v
 - [x] **métodos de string/array**: `join`, `trim`, `toLower`, `toUpper`, `replace`.
 - [x] parser: `interface`/`type`/`declare` como **erasure** (consome o corpo
   `{...}` balanceado; não geram código). exemplo.lex já passa do `interface`.
-- [ ] parser/codegen: `super(...)` em construtores de subclasse
-- [ ] parser: ternário `c ? a : b` (lexer ainda não tokeniza `?`)
-- [ ] parser: optional-chaining `?.` e struct-literal `T { campo: v }`
-- [ ] parser/codegen: `try/catch`, `fail`, `defer`
-- [ ] parser/codegen: `spawn`, `async`/`await`
+- [x] parser/codegen: **`super(...)`** em construtores de subclasse (campo `curClass`
+  no codegen; chama `@Owner.constructor(%this, args)` sem realocar).
+- [x] parser: **generic functions** `function f<T>(...)` (erasure — pula `<T>`).
+- [x] parser/codegen: **`fail`/`try`/`catch`/`defer`**. Modelo de erro fora-de-banda
+  via flag no runtime (`__lex_set_err`/`__lex_has_err`/`__lex_take_err`): `fail E`
+  seta+sai; `try f()` propaga (sai da função se setado); `f() catch H` limpa+usa H.
+  `defer S` empilha em `curDefers` e roda em ordem LIFO antes de cada `ret`.
+- [ ] parser/codegen: `spawn`, `async`/`await` + `Channel`/`Future` (threads)
+- [ ] codegen: builtins de ponteiro `alloc`/`free`/`poke*`/`peek*` (memória crua)
+- [ ] parser/codegen: `match` como expressão com guarda (`x if c`) e faixa (`a..b`)
+- [ ] codegen: literais `json`/`Map`, `f32`, e demais métodos
+- [ ] parser: ternário `c ? a : b` e optional-chaining `?.` (não usados no exemplo;
+  o lexer nem tokeniza `?` ainda)
 - [ ] meta: `bin/lex examples/exemplo.lex` compila e roda
 
 > Nota: o `runtime.c` continua **C** (compilado pelo clang) — "remover Rust" ≠
