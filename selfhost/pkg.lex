@@ -43,7 +43,7 @@ fn stripDotGit(s: string): string {
 }
 fn looksUrl(s: string): bool {
     return hasSlash(s) || pStarts(s, "http://") || pStarts(s, "https://")
-        || pStarts(s, "git@") || pStarts(s, "git:");
+    || pStarts(s, "git@") || pStarts(s, "git:");
 }
 // índice do '@' útil (ignora o "git@host" inicial), ou -1.
 fn markerAt(s: string): i64 {

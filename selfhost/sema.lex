@@ -64,7 +64,7 @@ class ClassInfo {
     methods: MethodInfo[] // vtable completa (herdada + própria; override no lugar)
     nslots: i64         // 1 (vtable) + nº de campos
     constructor(name: string, parent: string, tag: i64,
-                fields: FieldInfo[], methods: MethodInfo[], nslots: i64) {
+        fields: FieldInfo[], methods: MethodInfo[], nslots: i64) {
         this.name = name; this.parent = parent; this.tag = tag
         this.fields = fields; this.methods = methods; this.nslots = nslots
     }
@@ -248,7 +248,7 @@ fn semaEnumValue(src: string, enumName: string, variant: string): i64 {
 
 fn isPrimTy(ty: string): bool {
     return strEq(ty, "i64") || strEq(ty, "f64") || strEq(ty, "bool")
-        || strEq(ty, "string") || strEq(ty, "void") || strEq(ty, "?") || strEq(ty, "any");
+    || strEq(ty, "string") || strEq(ty, "void") || strEq(ty, "?") || strEq(ty, "any");
 }
 fn isArrayTy(ty: string): bool {
     const n: i64 = len(ty);
@@ -262,7 +262,7 @@ fn elementTy(ty: string): string {
 fn isMapTy(ty: string): bool {
     if (len(ty) < 5) { return false; }                         // "Map<>"
     return peek8(ty, 0) == 77 && peek8(ty, 1) == 97
-        && peek8(ty, 2) == 112 && peek8(ty, 3) == 60;          // "Map<"
+    && peek8(ty, 2) == 112 && peek8(ty, 3) == 60;          // "Map<"
 }
 fn mapValueTy(ty: string): string {
     if (isMapTy(ty)) { return substring(ty, 4, len(ty) - 1); }

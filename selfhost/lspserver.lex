@@ -8,7 +8,7 @@ fn endsCRLF2(s: string): bool {
     const n: i64 = len(s);
     if (n < 4) { return false; }
     return peek8(s, n - 4) == 13 && peek8(s, n - 3) == 10
-        && peek8(s, n - 2) == 13 && peek8(s, n - 1) == 10;
+    && peek8(s, n - 2) == 13 && peek8(s, n - 1) == 10;
 }
 fn lspTrim(s: string): string {
     const n: i64 = len(s);
