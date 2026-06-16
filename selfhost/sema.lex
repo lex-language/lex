@@ -17,7 +17,7 @@ import { Program, ClassDecl, ClassField, Func, Param, EnumDecl, Parser } from ".
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call, ArrayLit,
     Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm, Lambda,
-    TryExpr, CatchExpr
+    TryExpr, CatchExpr, SpawnExpr, AwaitExpr
 } from "./parser"
 import {
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, ForOfStmt, ForStmt, ExprStmt,
@@ -429,6 +429,8 @@ class Sema {
             Lambda lm => "()=>?",
             TryExpr t => this.typeOf(t.call, scope),    // try f() tem o tipo de f()
             CatchExpr c => this.typeOf(c.lhs, scope),   // x catch y tem o tipo de x
+            SpawnExpr s => "i64",                       // handle de thread (Future)
+            AwaitExpr a => "i64",                       // resultado da thread
             _ => "?"
         };
     }

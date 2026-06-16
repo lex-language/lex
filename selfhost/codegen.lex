@@ -24,7 +24,7 @@ import { lexSrc, Tok } from "./lexer"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call,
     ArrayLit, Field, MethodCall, Index, MapLit, Template, Match, Lambda,
-    TryExpr, CatchExpr,
+    TryExpr, CatchExpr, SpawnExpr, AwaitExpr,
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, FailStmt, DeferStmt, Func, Param, Program, Parser
 } from "./parser"
@@ -74,6 +74,7 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "parseFloat")) { return "__lex_parse_float"; }
     if (strEq(name, "peek8")) { return "__lex_peek8"; }
     if (strEq(name, "alloc")) { return "__lex_heap_alloc"; }  // ptr no heap (free-able)
+    if (strEq(name, "channel")) { return "__lex_chan_new"; }  // canal de thread
     if (strEq(name, "readFile")) { return "__lex_fs_read"; }
     if (strEq(name, "writeFile")) { return "__lex_fs_write"; }
     if (strEq(name, "system")) { return "__lex_system"; }
@@ -192,11 +193,15 @@ class Codegen {
     curLocals: string[]   // locais (alloca) da função atual — sombreiam globais
     curClass: string      // classe do método atual ("" fora de método) — p/ super(...)
     curDefers: Stmt[]     // statements adiados (defer) — emitidos antes de cada ret
+    thunkNames: string[]  // funções que precisam de thunk de thread (spawn/async)
+    asyncNames: string[]  // funções `async` — chamá-las lança thread (vira Future)
 
     constructor(sema: Sema) {
         this.outParts = []
         this.curClass = ""
         this.curDefers = []
+        this.thunkNames = []
+        this.asyncNames = []
         this.tmp = 0
         this.lbl = 0
         this.term = false
@@ -569,6 +574,7 @@ class Codegen {
         }
         if (strEq(c.name, "len")) { return this.genLen(c); }
         if (strEq(c.name, "super")) { return this.genSuperCall(c); }
+        if (idxOf(this.asyncNames, c.name) >= 0) { return this.spawnCall(c); }   // async: lança thread
         const rt: string = runtimeFn(c.name);
         if (!strEq(rt, "")) { return this.callRuntime(rt, c.args); }
         // chamada a função do usuário (boxando args `any`)
@@ -616,6 +622,15 @@ class Codegen {
             if (m.args.len() >= 2) { to = this.genExpr(m.args[1]); }
             return this.emitCall("__lex_str_replace", `i64 ${bv}, i64 ${frm}, i64 ${to}`);
         }
+        // canais de thread: ch.send(v) / ch.recv() / ch.close()
+        if (strEq(m.method, "send")) {
+            let v: string = "0";
+            if (m.args.len() >= 1) { v = this.genExpr(m.args[0]); }
+            this.emit(`  call void @__lex_chan_send(i64 ${bv}, i64 ${v})`);
+            return "0";
+        }
+        if (strEq(m.method, "recv")) { return this.emitCall("__lex_chan_recv", concat("i64 ", bv)); }
+        if (strEq(m.method, "close")) { return this.emitCall("__lex_chan_close", concat("i64 ", bv)); }
         // memória crua: métodos em ptr — buf.free() / buf.poke*(off,v) / buf.peek*(off)
         if (strEq(m.method, "free")) { this.emit(`  call void @__lex_free(i64 ${bv})`); return "0"; }
         const pk: string = ptrPoke(m.method);
@@ -776,6 +791,8 @@ class Codegen {
             Lambda lm => `ptrtoint (ptr @${lm.fnName} to i64)`,
             TryExpr t => this.genTry(t),
             CatchExpr c => this.genCatch(c),
+            SpawnExpr s => this.genSpawnExpr(s),
+            AwaitExpr a => this.genAwait(a),
             _ => "0"
         };
     }
@@ -1012,6 +1029,91 @@ class Codegen {
         };
     }
 
+    // spawn de uma chamada f(args): copia os args num struct no heap (malloc),
+    // cria a thread via pthread_create e devolve o handle (pthread_t como i64).
+    // Registra o thunk de `f` (emitido no fim do módulo).
+    spawnCall(c: Call): string {
+        const ptypes: string[] = this.sema.funcParamTypes(c.name);
+        const id: i64 = this.matchN;
+        this.matchN = this.matchN + 1;
+        let argp: string = "null";
+        if (c.args.len() > 0) {
+            const argi: string = this.emitCall("malloc", concat("i64 ", str(c.args.len() * 8)));
+            const p: string = this.newTmp();
+            this.emit(`  ${p} = inttoptr i64 ${argi} to ptr`);
+            let i: i64 = 0;
+            for (const a of c.args) {
+                let pt: string = "";
+                if (i < ptypes.len()) { pt = ptypes[i]; }
+                const v: string = this.boxArg(a, pt);
+                const fp: string = this.newTmp();
+                this.emit(`  ${fp} = getelementptr i64, ptr ${p}, i64 ${i}`);
+                this.emit(`  store i64 ${v}, ptr ${fp}`);
+                i = i + 1;
+            }
+            argp = p;
+        }
+        addUniq(this.thunkNames, c.name);
+        const ts: string = `%tid${id}.addr`;
+        this.emit(`  ${ts} = alloca i64`);
+        this.emit(`  call i32 @pthread_create(ptr ${ts}, ptr null, ptr @__lex_thunk_${c.name}, ptr ${argp})`);
+        const tid: string = this.newTmp();
+        this.emit(`  ${tid} = load i64, ptr ${ts}`);
+        return tid;
+    }
+    // spawn f(args) como expressão/statement: fire-and-forget → detach a thread.
+    genSpawnExpr(s: SpawnExpr): string {
+        const tid: string = match (s.call) { Call c => this.spawnCall(c), _ => "0" };
+        this.emit(`  call i32 @pthread_detach(i64 ${tid})`);
+        return tid;
+    }
+    // await fut: pthread_join no handle; o resultado volta disfarçado de ponteiro.
+    genAwait(a: AwaitExpr): string {
+        const h: string = this.genExpr(a.inner);
+        const id: i64 = this.matchN;
+        this.matchN = this.matchN + 1;
+        const slot: string = `%join${id}.addr`;
+        this.emit(`  ${slot} = alloca ptr`);
+        this.emit(`  call i32 @pthread_join(i64 ${h}, ptr ${slot})`);
+        const raw: string = this.newTmp();
+        this.emit(`  ${raw} = load ptr, ptr ${slot}`);
+        const r: string = this.newTmp();
+        this.emit(`  ${r} = ptrtoint ptr ${raw} to i64`);
+        return r;
+    }
+    // thunk de thread p/ `fn`: ptr(ptr) — desempacota os args, chama fn, devolve
+    // o resultado como ponteiro (o await desfaz). free no struct (se houver args).
+    genThunk(fnName: string) {
+        this.tmp = 0;
+        const ptypes: string[] = this.sema.funcParamTypes(fnName);
+        const n: i64 = ptypes.len();
+        this.raw(`define ptr @__lex_thunk_${fnName}(ptr %argp) {`);
+        this.term = false;
+        let argStr: string = "";
+        let i: i64 = 0;
+        while (i < n) {
+            const fp: string = this.newTmp();
+            this.emit(`  ${fp} = getelementptr i64, ptr %argp, i64 ${i}`);
+            const av: string = this.newTmp();
+            this.emit(`  ${av} = load i64, ptr ${fp}`);
+            if (i > 0) { argStr = concat(argStr, ", "); }
+            argStr = concat(argStr, concat("i64 ", av));
+            i = i + 1;
+        }
+        if (n > 0) {
+            const argi: string = this.newTmp();
+            this.emit(`  ${argi} = ptrtoint ptr %argp to i64`);
+            this.emit(`  call void @free(i64 ${argi})`);
+        }
+        const r: string = this.emitCall(fnName, argStr);
+        const rp: string = this.newTmp();
+        this.emit(`  ${rp} = inttoptr i64 ${r} to ptr`);
+        this.emit(`  ret ptr ${rp}`);
+        this.term = true;
+        this.raw("}");
+        this.raw("");
+    }
+
     // try <call>: avalia; se o callee setou o flag de erro, PROPAGA (retorna da
     // função atual com o flag ainda setado). Senão, o valor é o do callee.
     genTry(t: TryExpr): string {
@@ -1197,6 +1299,7 @@ class Codegen {
             if (isLambdaName(fl.name)) {
                 for (const nm of directLetNames(fl.body)) { addUniq(this.globalNames, nm); }
             }
+            if (fl.isAsync) { addUniq(this.asyncNames, fl.name); }   // chamada → spawn
         }
         // preâmbulo: formatos de print + printf + declarações do runtime (__lex_*).
         // Tudo trafega i64 (ponteiros como inteiros); as funções void do runtime
@@ -1222,6 +1325,16 @@ class Codegen {
         this.raw("declare i64 @__lex_arr_push(i64, i64)");
         this.raw("declare i64 @__lex_arr_pop(i64)");
         this.raw("declare i64 @__lex_arr_join(i64, i64)");
+        // threads/canais (spawn/async/await): malloc/free libc, pthread, chan
+        this.raw("declare i64 @malloc(i64)");
+        this.raw("declare void @free(i64)");
+        this.raw("declare i32 @pthread_create(ptr, ptr, ptr, ptr)");
+        this.raw("declare i32 @pthread_join(i64, ptr)");
+        this.raw("declare i32 @pthread_detach(i64)");
+        this.raw("declare i64 @__lex_chan_new()");
+        this.raw("declare void @__lex_chan_send(i64, i64)");
+        this.raw("declare i64 @__lex_chan_recv(i64)");
+        this.raw("declare i64 @__lex_chan_close(i64)");
         this.raw("declare i64 @__lex_set_err(i64)");
         this.raw("declare i64 @__lex_has_err()");
         this.raw("declare i64 @__lex_take_err()");
@@ -1287,6 +1400,8 @@ class Codegen {
             const mainFn: Func = new Func("main", pp, "i32", false, prog.main);
             this.genFunc(mainFn);
         }
+        // thunks de thread (1 por função spawnada/async) — depois que tudo existe.
+        for (const tn of this.thunkNames) { this.genThunk(tn); }
         // globais de string literais (ordem livre no módulo → no fim)
         for (const g of this.strs) { this.raw(g); }
         return 0;

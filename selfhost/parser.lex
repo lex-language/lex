@@ -132,6 +132,16 @@ class CatchExpr extends Expr {
     handler: Expr
     constructor(lhs: Expr, handler: Expr) { this.lhs = lhs; this.handler = handler }
 }
+// `spawn f(args)` — lança uma thread (pthread); avalia p/ o handle (Future).
+class SpawnExpr extends Expr {
+    call: Expr
+    constructor(call: Expr) { this.call = call }
+}
+// `await fut` — espera a thread (pthread_join); avalia p/ o resultado.
+class AwaitExpr extends Expr {
+    inner: Expr
+    constructor(inner: Expr) { this.inner = inner }
+}
 
 // ── AST: statements e declarações ────────────────────────────────────────────
 class Stmt {}
@@ -220,9 +230,10 @@ class Func {
     ret: string
     fallible: bool
     body: Stmt[]
+    isAsync: bool       // `async function`: chamá-la lança uma thread (Future)
     constructor(name: string, params: Param[], ret: string, fallible: bool, body: Stmt[]) {
         this.name = name; this.params = params; this.ret = ret
-        this.fallible = fallible; this.body = body
+        this.fallible = fallible; this.body = body; this.isAsync = false
     }
 }
 
@@ -392,6 +403,14 @@ class Parser {
         if (k == Tok.Try) {                          // try <expr fallível> — propaga
             this.advance();
             return new TryExpr(this.parseUnary());
+        }
+        if (k == Tok.Spawn) {                        // spawn f(args) — lança thread
+            this.advance();
+            return new SpawnExpr(this.parseUnary());
+        }
+        if (k == Tok.Await) {                        // await fut — junta a thread
+            this.advance();
+            return new AwaitExpr(this.parseUnary());
         }
         return this.parsePostfix();
     }
@@ -830,10 +849,14 @@ class Parser {
 
     // ── declaração de função e métodos ────────────────────────────────────────
     parseFunc(): Func {
+        let isAsync: bool = false;
+        if (this.peekKind() == Tok.Async) { this.advance(); isAsync = true; }
         this.expect(Tok.Function);                   // fn / function
         const name: string = this.advance().text;
         this.skipTypeArgs();                         // <T> genérico opcional (erasure)
-        return this.parseSig(name);
+        const f: Func = this.parseSig(name);
+        f.isAsync = isAsync;
+        return f;
     }
 
     // `(params): R[!] { corpo }` — assinatura+corpo, compartilhada por funções e
@@ -977,7 +1000,7 @@ class Parser {
             else if (k == Tok.Import) { imports.push(this.parseImport()); }
             else if (k == Tok.Enum) { enums.push(this.parseEnum()); }
             else if (k == Tok.Class) { classes.push(this.parseClass()); }
-            else if (k == Tok.Function) { funcs.push(this.parseFunc()); }
+            else if (k == Tok.Function || k == Tok.Async) { funcs.push(this.parseFunc()); }
             else if (k == Tok.Type || k == Tok.Interface || k == Tok.Declare) {
                 this.skipModuleDecl();   // interface/type/declare: erasure (não geram código)
             }
