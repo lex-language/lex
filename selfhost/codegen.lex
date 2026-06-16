@@ -73,6 +73,7 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "parseInt")) { return "__lex_parse_int"; }
     if (strEq(name, "parseFloat")) { return "__lex_parse_float"; }
     if (strEq(name, "peek8")) { return "__lex_peek8"; }
+    if (strEq(name, "alloc")) { return "__lex_heap_alloc"; }  // ptr no heap (free-able)
     if (strEq(name, "readFile")) { return "__lex_fs_read"; }
     if (strEq(name, "writeFile")) { return "__lex_fs_write"; }
     if (strEq(name, "system")) { return "__lex_system"; }
@@ -95,6 +96,7 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "gget")) { return "__lex_gget"; }
     if (strEq(name, "gset")) { return "__lex_gset"; }
     if (strEq(name, "fabs")) { return "__lex_f_abs"; }
+    // métodos de ptr (poke/peek) tratados em ptrPoke/ptrPeek (genMethodCall).
     // math f64 (arg/retorno em bits-de-double num i64; ver runtime.c)
     if (strEq(name, "sqrt")) { return "__lex_f_sqrt"; }
     if (strEq(name, "pow")) { return "__lex_f_pow"; }
@@ -107,6 +109,23 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "exp")) { return "__lex_f_exp"; }
     if (strEq(name, "ln")) { return "__lex_f_ln"; }
     if (strEq(name, "log10")) { return "__lex_f_log10"; }
+    return "";
+}
+
+// método de escrita em ptr (off, val) → void; "" se não for poke.
+fn ptrPoke(m: string): string {
+    if (strEq(m, "poke8")) { return "__lex_poke8"; }
+    if (strEq(m, "poke16")) { return "__lex_poke16"; }
+    if (strEq(m, "poke32")) { return "__lex_poke32"; }
+    if (strEq(m, "poke64")) { return "__lex_poke64"; }
+    return "";
+}
+// método de leitura em ptr (off) → i64; "" se não for peek.
+fn ptrPeek(m: string): string {
+    if (strEq(m, "peek8")) { return "__lex_peek8"; }
+    if (strEq(m, "peek16")) { return "__lex_peek16"; }
+    if (strEq(m, "peek32")) { return "__lex_peek32"; }
+    if (strEq(m, "peek64")) { return "__lex_peek64"; }
     return "";
 }
 
@@ -596,6 +615,23 @@ class Codegen {
             if (m.args.len() >= 1) { frm = this.genExpr(m.args[0]); }
             if (m.args.len() >= 2) { to = this.genExpr(m.args[1]); }
             return this.emitCall("__lex_str_replace", `i64 ${bv}, i64 ${frm}, i64 ${to}`);
+        }
+        // memória crua: métodos em ptr — buf.free() / buf.poke*(off,v) / buf.peek*(off)
+        if (strEq(m.method, "free")) { this.emit(`  call void @__lex_free(i64 ${bv})`); return "0"; }
+        const pk: string = ptrPoke(m.method);
+        if (!strEq(pk, "")) {
+            let o: string = "0";
+            let v: string = "0";
+            if (m.args.len() >= 1) { o = this.genExpr(m.args[0]); }
+            if (m.args.len() >= 2) { v = this.genExpr(m.args[1]); }
+            this.emit(`  call void @${pk}(i64 ${bv}, i64 ${o}, i64 ${v})`);
+            return "0";
+        }
+        const pe: string = ptrPeek(m.method);
+        if (!strEq(pe, "")) {
+            let o: string = "0";
+            if (m.args.len() >= 1) { o = this.genExpr(m.args[0]); }
+            return this.emitCall(pe, `i64 ${bv}, i64 ${o}`);
         }
         // método de classe: dispatch estático @Dono.metodo(this, args…)
         if (isClassTy(baseTy) && this.sema.classes.findInfo(baseTy) >= 0) {
@@ -1200,6 +1236,15 @@ class Codegen {
         this.raw("declare i64 @__lex_map_set(i64, i64, i64)");
         this.raw("declare i64 @__lex_map_len(i64)");
         this.raw("declare i64 @__lex_alloc(i64)");
+        this.raw("declare i64 @__lex_heap_alloc(i64)");
+        this.raw("declare void @__lex_free(i64)");
+        this.raw("declare void @__lex_poke8(i64, i64, i64)");
+        this.raw("declare void @__lex_poke16(i64, i64, i64)");
+        this.raw("declare void @__lex_poke32(i64, i64, i64)");
+        this.raw("declare void @__lex_poke64(i64, i64, i64)");
+        this.raw("declare i64 @__lex_peek16(i64, i64)");
+        this.raw("declare i64 @__lex_peek32(i64, i64)");
+        this.raw("declare i64 @__lex_peek64(i64, i64)");
         this.raw("declare i64 @__lex_fs_read(i64)");
         this.raw("declare i64 @__lex_fs_write(i64, i64)");
         this.raw("declare i64 @__lex_fs_exists(i64)");
