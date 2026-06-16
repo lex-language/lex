@@ -51,14 +51,19 @@ fn findRuntime(): string {
 }
 
 // resolve um import:
-//   "./mod"  → "dir/mod.lex" (relativo ao importador)
-//   "mod"    → módulo std: "std/mod.lex" (subindo diretórios)
+//   "./mod"     → "dir/mod.lex" (relativo ao importador)
+//   "../x/mod"  → "dir/../x/mod.lex" (relativo, mantém o ../)
+//   "mod"       → módulo std: "std/mod.lex" (subindo diretórios)
 fn resolveImport(importer: string, spec: string): string {
+    const dir: string = dirOf(importer);
     if (len(spec) >= 2 && peek8(spec, 0) == 46 && peek8(spec, 1) == 47) {   // "./"
         const s: string = substring(spec, 2, len(spec));
-        const dir: string = dirOf(importer);
         if (strEq(dir, "")) { return concat(s, ".lex"); }
         return concat(concat(dir, "/"), concat(s, ".lex"));
+    }
+    if (len(spec) >= 3 && peek8(spec, 0) == 46 && peek8(spec, 1) == 46 && peek8(spec, 2) == 47) {  // "../"
+        if (strEq(dir, "")) { return concat(spec, ".lex"); }
+        return concat(concat(dir, "/"), concat(spec, ".lex"));
     }
     return findStd(concat(spec, ".lex"));   // nome "bare" → módulo std
 }

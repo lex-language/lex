@@ -1,6 +1,6 @@
 // interp.test.lex — o interpretador-em-lex rodando programas SEM clang/LLVM.
 // interpret(src) devolve o valor de retorno do main, executando a AST direto.
-import { interpret } from "./interp"
+import { interpret } from "../selfhost/interp"
 
 describe("interpretador (sem clang)", () => {
         test("recursão + if: fib(10) = 55", () => {

@@ -5,13 +5,21 @@ auto-hospedado** (ponto-fixo provado por `bootstrap.sh`) e **8 ferramentas** est
 portadas e testadas/smoke — fmt, TOML, semver, pkg(manifesto), JSON, diag, LSP,
 e o `lex` unificado (`lexcli.lex`). ~4.500 linhas de lex, 300 asserções verdes.
 
-**Teste de aceitação da meta** ("Rust eliminado") — ✅ **DEMONSTRADO** (`selfhost/seed.sh`):
-o `lex` **stage0** (lexcli, buildado uma última vez pelo Rust) faz `run`/`test`/`check`/
-`fmt` **sem Rust** e **se reconstrói** (stage0 → stage1, que roda). Logo o `src/` pode
-ser arquivado — basta guardar o binário stage0 (ou um branch de arquivo do Rust).
-Falta p/ PARIDADE 100% (não bloqueiam a semente): wasm32 (codegen ptr-aware),
-cross p/ linux/windows (sysroots), `check` semântico completo (tipo/aridade), pkg
-transitivo/publish/registry-HTTP.
+> ⚠️ **REALIDADE: o compilador-em-lex é um compilador de SUBSET.** Ele cobre só o
+> subconjunto da linguagem em que ele próprio é escrito — compila a si mesmo
+> (`bootstrap.sh`, ponto-fixo) e a suíte `tests/`, e **se reconstrói sem Rust**
+> (`seed.sh`). MAS **NÃO compila programas de linguagem completa**: `bin/lex
+> examples/exemplo.lex` falha (o parser bate em `try/catch`, `spawn`, `async`,
+> struct-literal, ternário, optional-chaining, compound-assign…; e o codegen não
+> faz aritmética f64). Portanto **o `src/` (Rust) NÃO pode ser aposentado ainda** —
+> ele é o ÚNICO compilador de linguagem-completa (e o único com wasm/cross/float).
+
+**O que falta p/ realmente aposentar o `src/`** (além de wasm/cross/`check`-de-tipo):
+portar pro self-hostado TODO o resto da linguagem que os programas reais usam —
+parser de `try/catch`/`spawn`/`async`/`await`/struct-literal/ternário/optional-
+chaining/compound-assign, e **aritmética f64** no codegen. É um esforço grande
+(o parser/codegen self-hostado hoje param no subset). Sem isso, remover o Rust
+quebra `examples/exemplo.lex` e qualquer programa fora do subset.
 
 > Nota: o `runtime.c` continua **C** (compilado pelo clang) — "remover Rust" ≠
 > "remover C". Até o `lex` de produção embute `runtime.c` e usa clang como linker.
@@ -190,14 +198,14 @@ dependência, a sema-em-lex precisa emitir diagnósticos.
 > **linux/windows** exigem sysroots/import-libs (não orquestrados em lex ainda).
 > Espelha `src/wasm_host.rs` + target em `src/main.rs`/`src/codegen.rs`.
 
-## Fase I — Semente (stage0)  ·  esforço: S  ·  ✅ DEMONSTRADO (`selfhost/seed.sh`)
-> **FEITO**: `seed.sh` builda o `lex-stage0` (lexcli, via Rust uma última vez) e
-> prova que ele faz `run`/`test`/`check`/`fmt` SEM Rust e **se reconstrói**
-> (stage0 → stage1, que roda). Auto-suficiência comprovada.
-> **Pra de fato deletar o `src/`**: commitar o binário `lex-stage0` (+ `runtime.c`)
-> ou manter um branch de arquivo do Rust; então arquivar `src/`+`Cargo.toml`. (É uma
-> decisão do projeto — o COMMIT de binário é o único passo manual que falta; a prova
-> técnica está completa.)
+## Fase I — Semente (stage0)  ·  esforço: S  ·  ✅ SELF-HOSTING DO SUBSET demonstrado
+> **FEITO (subset)**: `seed.sh` builda o `lex-stage0` (lexcli, via Rust) e prova que
+> ele faz `run`/`test`/`check`/`fmt` SEM Rust e **se reconstrói** (stage0 → stage1).
+> Auto-suficiência do SUBSET comprovada.
+> **MAS NÃO basta p/ deletar o `src/`**: o stage0 é um compilador de SUBSET — não
+> compila `examples/exemplo.lex` nem programas que usem float-arith/try/spawn/etc.
+> Deletar o `src/` agora quebraria o compilador de linguagem-completa. A semente só
+> vira substituta de verdade DEPOIS de portar a linguagem inteira (ver aviso no topo).
 
 ---
 

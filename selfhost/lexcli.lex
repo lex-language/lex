@@ -65,12 +65,14 @@ fn watchLoop(file: string, out: string): i64 {
     return 0;
 }
 
-fn cmdBuild(av: string[]): i64 {
+// start = índice onde começa a varrer (2 p/ `lex build …`; 1 p/ a forma
+// implícita `lex <arquivo.lex> …`, compatível com o invocar do Rust/bootstrap).
+fn cmdBuild(av: string[], start: i64): i64 {
     let file: string = "";
     let out: string = "a.out";
     let watch: bool = false;
     let flags: string = "";
-    let i: i64 = 2;
+    let i: i64 = start;
     while (i < av.len()) {
         if (strEq(av[i], "-o") && i + 1 < av.len()) { out = av[i + 1]; i = i + 2; }
         else if (strEq(av[i], "--watch")) { watch = true; i = i + 1; }
@@ -156,12 +158,13 @@ if (av.len() < 2) {
 const cmd: string = av[1];
 let rc: i64 = 0;
 if (strEq(cmd, "version") || strEq(cmd, "--version")) { Terminal.log("lex (self-hosted) 0.1.0"); }
-else if (strEq(cmd, "build") || strEq(cmd, "compile")) { rc = cmdBuild(av); }
+else if (strEq(cmd, "build") || strEq(cmd, "compile")) { rc = cmdBuild(av, 2); }
 else if (strEq(cmd, "run")) { rc = cmdRun(av); }
 else if (strEq(cmd, "fmt")) { rc = cmdFmt(av); }
 else if (strEq(cmd, "test")) { rc = cmdTest(av); }
 else if (strEq(cmd, "check")) { rc = cmdCheck(av); }
 else if (strEq(cmd, "lsp")) { rc = runLsp(); }
 else if (strEq(cmd, "pkg")) { rc = runPkg(av, 2); }
+else if (hasSuffix(cmd, ".lex")) { rc = cmdBuild(av, 1); }   // forma implícita: lex <arquivo.lex>
 else { Terminal.log(`lex: comando desconhecido '${cmd}'`); rc = 1; }
 return rc;

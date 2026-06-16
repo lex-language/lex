@@ -2,8 +2,8 @@
 // Para cada caso: compila o fonte (subset) para LLVM IR, linka com clang e RODA
 // o binário nativo, conferindo o exit code. Tudo dirigido pelo próprio lex.
 // Requer clang no PATH e /tmp gravável. Rode com:  lex test selfhost
-import { compileToIR } from "./codegen"
-import { compileFileToIR } from "./modloader"
+import { compileToIR } from "../selfhost/codegen"
+import { compileFileToIR } from "../selfhost/modloader"
 
 // fonte (subset) -> exit code do binário nativo produzido (-1 se o clang falhar).
 // Linka o runtime C (src/runtime.c) p/ resolver os __lex_* (strings/arrays/etc.);

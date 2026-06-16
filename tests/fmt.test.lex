@@ -1,6 +1,6 @@
 // Testes do formatador-em-lex (F6.7). Rode com:  lex test selfhost
 // Confere a saída de formatSource (indentação, linhas em branco, templates).
-import { formatSource } from "./fmt"
+import { formatSource } from "../selfhost/fmt"
 
 describe("fmt: indentação", () => {
         test("bloco simples ganha 4 espaços", () => {

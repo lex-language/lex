@@ -1,5 +1,5 @@
 // Testes do JSON-em-lex (F6.11). Rode com:  lex test selfhost
-import { jParse, jGet, jStr, jNum, jArr, jPath, jEscape } from "./json"
+import { jParse, jGet, jStr, jNum, jArr, jPath, jEscape } from "../selfhost/json"
 
 describe("json: parse e acessores", () => {
         test("objeto simples", () => {
