@@ -26,15 +26,27 @@ fn hasSuffix(s: string, suf: string): bool {
     return strEq(substring(s, sl - fl, sl), suf);
 }
 
-// compila um arquivo .lex (resolvendo imports) p/ binário nativo `out`.
-fn buildFile(file: string, out: string): i64 {
+// flags do clang p/ um alias de alvo (cross-compile). "" = nativo.
+// macOS x64/arm64 funciona no mesmo SO (clang -arch). linux/windows precisam de
+// sysroot; wasm32 precisa de codegen ptr-aware (i32) — ainda não suportados.
+fn targetFlags(alias: string): string {
+    if (strEq(alias, "macos-x64")) { return "-arch x86_64 -mmacosx-version-min=11.0"; }
+    if (strEq(alias, "macos-arm64")) { return "-arch arm64 -mmacosx-version-min=11.0"; }
+    Terminal.log(`aviso: alvo '${alias}' nao suportado (so macos-x64/arm64); usando nativo`);
+    return "";
+}
+
+// compila um arquivo .lex (resolvendo imports) p/ binário em `out`, com flags de
+// alvo opcionais.
+fn buildFileT(file: string, out: string, flags: string): i64 {
     const ir: string = compileFileToIR(file);
     const ll: string = concat(out, ".ll");
     writeFile(ll, ir);
-    const rc: i64 = system(`clang -Wno-override-module -o ${out} ${ll} ${findRuntime()} -lpthread`);
+    const rc: i64 = system(`clang -Wno-override-module ${flags} -o ${out} ${ll} ${findRuntime()} -lpthread`);
     if (rc != 0) { Terminal.log(`erro: clang falhou (rc=${rc})`); return 1; }
     return 0;
 }
+fn buildFile(file: string, out: string): i64 { return buildFileT(file, out, ""); }
 
 // recompila ao mudar o arquivo (poll de conteúdo a cada 1s — não há builtin de
 // mtime/sleep, então usa system("sleep 1")). Roda até Ctrl-C.
@@ -57,14 +69,16 @@ fn cmdBuild(av: string[]): i64 {
     let file: string = "";
     let out: string = "a.out";
     let watch: bool = false;
+    let flags: string = "";
     let i: i64 = 2;
     while (i < av.len()) {
         if (strEq(av[i], "-o") && i + 1 < av.len()) { out = av[i + 1]; i = i + 2; }
         else if (strEq(av[i], "--watch")) { watch = true; i = i + 1; }
+        else if (strEq(av[i], "--target") && i + 1 < av.len()) { flags = targetFlags(av[i + 1]); i = i + 2; }
         else { file = av[i]; i = i + 1; }
     }
-    if (strEq(file, "")) { Terminal.log("uso: lex build <arquivo.lex> [-o saida] [--watch]"); return 1; }
-    if (buildFile(file, out) != 0) { return 1; }
+    if (strEq(file, "")) { Terminal.log("uso: lex build <arquivo.lex> [-o saida] [--target t] [--watch]"); return 1; }
+    if (buildFileT(file, out, flags) != 0) { return 1; }
     Terminal.log(`ok: ${file} -> ${out}`);
     if (watch) { return watchLoop(file, out); }
     return 0;
