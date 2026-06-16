@@ -12,7 +12,7 @@
 //   lex version                           versão
 //
 // (wasm/cross-compile e o fetch de rede do pkg ainda faltam — ver REMOVER-RUST.md.)
-import { compileFileToIR } from "./modloader"
+import { compileFileToIR, findRuntime } from "./modloader"
 import { formatSource } from "./fmt"
 import { runTestFile } from "./testrunner"
 import { runCheck } from "./checker"
@@ -31,7 +31,7 @@ fn buildFile(file: string, out: string): i64 {
     const ir: string = compileFileToIR(file);
     const ll: string = concat(out, ".ll");
     writeFile(ll, ir);
-    const rc: i64 = system(`clang -Wno-override-module -o ${out} ${ll} src/runtime.c -lpthread`);
+    const rc: i64 = system(`clang -Wno-override-module -o ${out} ${ll} ${findRuntime()} -lpthread`);
     if (rc != 0) { Terminal.log(`erro: clang falhou (rc=${rc})`); return 1; }
     return 0;
 }

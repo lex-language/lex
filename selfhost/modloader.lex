@@ -22,15 +22,45 @@ fn dirOf(path: string): string {
     return substring(path, 0, cut);
 }
 
-// resolve `import "./mod"` relativo ao arquivo importador → "dir/mod.lex".
-fn resolveImport(importer: string, spec: string): string {
-    let s: string = spec;
-    if (len(s) >= 2 && peek8(s, 0) == 46 && peek8(s, 1) == 47) {   // tira "./"
-        s = substring(s, 2, len(s));
+// acha "std/<rel>" subindo diretórios (igual find_std_file do compilador Rust):
+// tenta std/, ../std/, ../../std/… Devolve o 1º que existe, ou "std/<rel>".
+fn findStd(rel: string): string {
+    let prefix: string = "";
+    let i: i64 = 0;
+    while (i < 8) {
+        const cand: string = concat(prefix, concat("std/", rel));
+        if (exists(cand)) { return cand; }
+        prefix = concat(prefix, "../");
+        i = i + 1;
     }
-    const dir: string = dirOf(importer);
-    if (strEq(dir, "")) { return concat(s, ".lex"); }
-    return concat(concat(dir, "/"), concat(s, ".lex"));
+    return concat("std/", rel);
+}
+
+// acha o `src/runtime.c` subindo diretórios (p/ o link via clang funcionar de
+// qualquer subpasta). Devolve o 1º que existe, ou "src/runtime.c".
+fn findRuntime(): string {
+    let prefix: string = "";
+    let i: i64 = 0;
+    while (i < 8) {
+        const cand: string = concat(prefix, "src/runtime.c");
+        if (exists(cand)) { return cand; }
+        prefix = concat(prefix, "../");
+        i = i + 1;
+    }
+    return "src/runtime.c";
+}
+
+// resolve um import:
+//   "./mod"  → "dir/mod.lex" (relativo ao importador)
+//   "mod"    → módulo std: "std/mod.lex" (subindo diretórios)
+fn resolveImport(importer: string, spec: string): string {
+    if (len(spec) >= 2 && peek8(spec, 0) == 46 && peek8(spec, 1) == 47) {   // "./"
+        const s: string = substring(spec, 2, len(spec));
+        const dir: string = dirOf(importer);
+        if (strEq(dir, "")) { return concat(s, ".lex"); }
+        return concat(concat(dir, "/"), concat(s, ".lex"));
+    }
+    return findStd(concat(spec, ".lex"));   // nome "bare" → módulo std
 }
 
 class ModuleLoader {

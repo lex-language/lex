@@ -261,18 +261,40 @@ fn prec(k: Tok): i64 {
     return 0;
 }
 
+// nome legível de um token esperado (p/ mensagens de erro de sintaxe).
+fn tokName(k: Tok): string {
+    if (k == Tok.RParen) { return "')'"; }
+    if (k == Tok.RBrace) { return "'}'"; }
+    if (k == Tok.RBracket) { return "']'"; }
+    if (k == Tok.LParen) { return "'('"; }
+    if (k == Tok.LBrace) { return "'{'"; }
+    if (k == Tok.Colon) { return "':'"; }
+    if (k == Tok.Eq) { return "'='"; }
+    if (k == Tok.FatArrow) { return "'=>'"; }
+    if (k == Tok.Gt) { return "'>'"; }
+    if (k == Tok.From) { return "'from'"; }
+    if (k == Tok.Function) { return "'fn'"; }
+    return "token";
+}
+
 // ── o parser ────────────────────────────────────────────────────────────────
 class Parser {
     toks: Token[]
     pos: i64
     lambdas: Func[]    // arrow functions içadas (anexadas a `funcs` em parseModule)
     lambdaN: i64
+    errs: string[]     // erros de sintaxe acumulados (mensagem)
+    errPos: i64[]      // posição (offset de byte) de cada erro
     constructor(toks: Token[]) {
         this.toks = toks
         this.pos = 0
         this.lambdas = []
         this.lambdaN = 0
+        this.errs = []
+        this.errPos = []
     }
+    recordErrAt(pos: i64, msg: string) { this.errs.push(msg); this.errPos.push(pos); }
+    recordErr(msg: string) { this.recordErrAt(this.peekToken(0).pos, msg); }
 
     // índice do próximo token que NÃO é quebra de linha (newlines são invisíveis)
     nextPos(): i64 {
@@ -309,7 +331,7 @@ class Parser {
 
     expect(k: Tok) {
         if (this.peekKind() == k) { this.advance(); }
-        // erro: token inesperado — silencioso no PoC (spans/erros vêm depois)
+        else { this.recordErr(concat("expected ", tokName(k))); }
     }
 
     eatSemi() {
@@ -425,7 +447,8 @@ class Parser {
             }
             return new Var(t.text, t.pos);
         }
-        return new Var("<?>", t.pos);   // token inesperado (PoC)
+        this.recordErrAt(t.pos, "unexpected token in expression");
+        return new Var("<?>", t.pos);
     }
 
     // pula `<...>` de argumentos de tipo (ex.: `new Box<i64>(...)`), se houver.
