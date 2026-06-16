@@ -441,6 +441,10 @@ class Parser {
         if (k == Tok.Match) { return this.parseMatch(); }
         if (k == Tok.Template) { return this.parseTemplate(t.text); }
         if (k == Tok.LBrace) { return this.parseBrace(); }
+        if (k == Tok.Super) {                        // super(args) → ctor do pai
+            if (this.peekKind() == Tok.LParen) { return new Call("super", this.parseArgs()); }
+            return new Var("super", t.pos);          // super.x (raro) — best-effort
+        }
         if (k == Tok.Ident) {
             if (this.peekKind() == Tok.LParen) {
                 return new Call(t.text, this.parseArgs());

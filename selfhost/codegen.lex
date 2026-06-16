@@ -170,9 +170,11 @@ class Codegen {
     bindAddrs: string[]
     globalNames: string[] // const/let de topo promovidos a slots globais (gget/gset)
     curLocals: string[]   // locais (alloca) da função atual — sombreiam globais
+    curClass: string      // classe do método atual ("" fora de método) — p/ super(...)
 
     constructor(sema: Sema) {
         this.outParts = []
+        this.curClass = ""
         this.tmp = 0
         this.lbl = 0
         this.term = false
@@ -506,6 +508,26 @@ class Codegen {
         return "0";
     }
 
+    // super(args): chama o constructor da superclasse no MESMO `this` (não aloca).
+    genSuperCall(c: Call): string {
+        const ci: ClassInfo = this.sema.classes.find(this.curClass);
+        if (strEq(ci.parent, "")) { return "0"; }
+        const owner: string = this.sema.classes.methodOwner(ci.parent, "constructor");
+        if (strEq(owner, "")) { return "0"; }
+        const thisV: string = this.genLoad("this");
+        const ptypes: string[] = this.sema.methodParamTypes(ci.parent, "constructor");
+        let argStr: string = concat("i64 ", thisV);
+        let i: i64 = 0;
+        for (const a of c.args) {
+            let pt: string = "";
+            if (i < ptypes.len()) { pt = ptypes[i]; }
+            argStr = concat(argStr, concat(", i64 ", this.boxArg(a, pt)));
+            i = i + 1;
+        }
+        this.emitCall(concat(owner, ".constructor"), argStr);
+        return "0";
+    }
+
     genCall(c: Call): string {
         // chamada INDIRETA: c.name é uma variável de tipo função (arrow recebido)
         if (isFunctionType(this.scope.get(c.name))) {
@@ -524,6 +546,7 @@ class Codegen {
             return "0";
         }
         if (strEq(c.name, "len")) { return this.genLen(c); }
+        if (strEq(c.name, "super")) { return this.genSuperCall(c); }
         const rt: string = runtimeFn(c.name);
         if (!strEq(rt, "")) { return this.callRuntime(rt, c.args); }
         // chamada a função do usuário (boxando args `any`)
@@ -984,6 +1007,7 @@ class Codegen {
         this.lbl = 0;
         this.term = false;
         this.curMain = false;
+        this.curClass = cls;         // p/ resolver super(...) ao pai
         this.scope = new Scope();
         this.scope.set("this", cls);
         for (const p of f.params) { this.scope.set(p.name, p.ty); }
@@ -1014,6 +1038,7 @@ class Codegen {
         this.lbl = 0;
         this.term = false;
         this.curMain = strEq(f.name, "main");
+        this.curClass = "";          // função livre: fora de classe
         this.scope = new Scope();
         for (const p of f.params) { this.scope.set(p.name, p.ty); }
 
