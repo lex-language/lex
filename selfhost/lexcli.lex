@@ -26,14 +26,75 @@ fn hasSuffix(s: string, suf: string): bool {
     return strEq(substring(s, sl - fl, sl), suf);
 }
 
-// flags do clang p/ um alias de alvo (cross-compile). "" = nativo.
-// macOS x64/arm64 funciona no mesmo SO (clang -arch). linux/windows precisam de
-// sysroot; wasm32 precisa de codegen ptr-aware (i32) — ainda não suportados.
-fn targetFlags(alias: string): string {
-    if (strEq(alias, "macos-x64")) { return "-arch x86_64 -mmacosx-version-min=11.0"; }
-    if (strEq(alias, "macos-arm64")) { return "-arch arm64 -mmacosx-version-min=11.0"; }
-    Terminal.log(`aviso: alvo '${alias}' nao suportado (so macos-x64/arm64); usando nativo`);
-    return "";
+// ── cross-compile ────────────────────────────────────────────────────────────
+// Um alvo: triple do LLVM (p/ emitir o objeto), arquitetura (p/ o llvm-lib do
+// Windows), SO (escolhe como linkar) e extensão do binário. `os` vazio = alias
+// desconhecido.
+class CrossT {
+    llvm: string
+    arch: string
+    os: string
+    ext: string
+    constructor(llvm: string, arch: string, os: string, ext: string) {
+        this.llvm = llvm; this.arch = arch; this.os = os; this.ext = ext
+    }
+}
+fn resolveCross(alias: string): CrossT {
+    if (strEq(alias, "linux-x64")) { return new CrossT("x86_64-unknown-linux-gnu", "x86_64", "linux", ""); }
+    if (strEq(alias, "linux-arm64")) { return new CrossT("aarch64-unknown-linux-gnu", "aarch64", "linux", ""); }
+    if (strEq(alias, "windows-x64")) { return new CrossT("x86_64-pc-windows-msvc", "x64", "windows", ".exe"); }
+    if (strEq(alias, "windows-arm64")) { return new CrossT("aarch64-pc-windows-msvc", "arm64", "windows", ".exe"); }
+    if (strEq(alias, "macos-x64")) { return new CrossT("x86_64-apple-macosx11.0.0", "x86_64", "macos", ""); }
+    if (strEq(alias, "macos-arm64")) { return new CrossT("arm64-apple-macosx11.0.0", "arm64", "macos", ""); }
+    return new CrossT("", "", "", "");
+}
+
+// .def das funções do kernel32/ws2_32 que a runtime freestanding do Windows usa.
+// O llvm-lib gera a import lib MS a partir daqui — sem Windows SDK, sem mingw.
+fn kernel32Def(): string {
+    return "LIBRARY kernel32.dll\nEXPORTS\nGetStdHandle\nWriteFile\nReadFile\nCloseHandle\nGetProcessHeap\nHeapAlloc\nHeapFree\nHeapReAlloc\nCreateFileW\nSetFilePointerEx\nGetFileAttributesW\nGetFileAttributesExW\nDeleteFileW\nMoveFileExW\nCreateDirectoryW\nRemoveDirectoryW\nFindFirstFileW\nFindNextFileW\nFindClose\nMultiByteToWideChar\nWideCharToMultiByte\nGetCurrentThreadId\nCreateThread\nWaitForSingleObject\nSleep\nInitializeCriticalSection\nEnterCriticalSection\nLeaveCriticalSection\nDeleteCriticalSection\nInitializeConditionVariable\nSleepConditionVariableCS\nWakeConditionVariable\nWakeAllConditionVariable\nExitProcess\n";
+}
+fn ws2Def(): string {
+    return "LIBRARY ws2_32.dll\nEXPORTS\nWSAStartup\nsocket\nbind\nlisten\naccept\nsetsockopt\nrecv\nsend\nclosesocket\n";
+}
+
+// cross-compile p/ outro SO/arquitetura. A IR é agnóstica: o objeto sai no triple
+// do alvo (clang --target), e o link traz o que cada SO precisa:
+//   macOS   — clang do sistema com -arch (usa o SDK; sem toolchain extra)
+//   Linux   — runtime FREESTANDING (syscalls cruas, sem libc/CRT) + ld.lld → estático
+//   Windows — runtime FREESTANDING pela Win32 (kernel32/ws2_32) + lld-link, com as
+//             import libs geradas na hora pelo llvm-lib a partir dos .def
+fn buildCross(file: string, out: string, xt: CrossT): i64 {
+    const ir: string = compileFileToIR(file);       // mesma IR de sempre (agnóstica)
+    const ll: string = concat(out, ".ll");
+    writeFile(ll, ir);
+    const clang: string = findLlvmTool("clang");
+    const obj: string = concat(out, ".o");
+    const rt: string = findRuntime();
+
+    let rc: i64 = system(`${clang} --target=${xt.llvm} -O2 -c ${ll} -o ${obj} -Wno-override-module`);
+    if (rc != 0) { Terminal.log(`erro: clang falhou ao emitir o objeto (rc=${rc})`); return 1; }
+
+    if (strEq(xt.os, "macos")) {
+        rc = system(`clang -arch ${xt.arch} -mmacosx-version-min=11.0 ${obj} ${rt} -o ${out} -lpthread`);
+    } else if (strEq(xt.os, "linux")) {
+        rc = system(`${clang} --target=${xt.llvm} -DLEX_NATIVE_FREESTANDING -ffreestanding -fno-builtin -nostdlib -fno-stack-protector -fno-pie -static -fuse-ld=lld -Wl,--entry,_start ${obj} ${rt} -o ${out}`);
+    } else {
+        const k32d: string = "/tmp/lex_kernel32.def";
+        const ws2d: string = "/tmp/lex_ws2_32.def";
+        const k32l: string = "/tmp/lex_kernel32.lib";
+        const ws2l: string = "/tmp/lex_ws2_32.lib";
+        writeFile(k32d, kernel32Def());
+        writeFile(ws2d, ws2Def());
+        const llvmlib: string = findLlvmTool("llvm-lib");
+        rc = system(`${llvmlib} /def:${k32d} /out:${k32l} /machine:${xt.arch}`);
+        if (rc == 0) { rc = system(`${llvmlib} /def:${ws2d} /out:${ws2l} /machine:${xt.arch}`); }
+        if (rc != 0) { Terminal.log("erro: llvm-lib falhou ao gerar as import libs"); return 1; }
+        rc = system(`${clang} --target=${xt.llvm} -DLEX_WIN_FREESTANDING -ffreestanding -fno-builtin -fno-stack-protector -nostdlib -fuse-ld=lld -Wl,/entry:lexWinStart -Wl,/subsystem:console ${obj} ${rt} ${k32l} ${ws2l} -o ${out}`);
+    }
+    if (rc != 0) { Terminal.log(`erro: link falhou p/ ${xt.os} (rc=${rc})`); return 1; }
+    system(`rm -f ${obj}`);
+    return 0;
 }
 
 // compila um arquivo .lex (resolvendo imports) p/ binário em `out`, com flags de
@@ -108,30 +169,40 @@ fn cmdBuild(av: string[], start: i64): i64 {
     let file: string = "";
     let out: string = "";
     let watch: bool = false;
-    let flags: string = "";
-    let wasm: bool = false;
+    let tgt: string = "native";
     let i: i64 = start;
     while (i < av.len()) {
         if (strEq(av[i], "-o") && i + 1 < av.len()) { out = av[i + 1]; i = i + 2; }
         else if (strEq(av[i], "--watch")) { watch = true; i = i + 1; }
-        else if (strEq(av[i], "--target") && i + 1 < av.len()) {
-            const t: string = av[i + 1];
-            if (strEq(t, "wasm") || strEq(t, "wasm32")) { wasm = true; }
-            else { flags = targetFlags(t); }
-            i = i + 2;
-        }
+        else if (strEq(av[i], "--target") && i + 1 < av.len()) { tgt = av[i + 1]; i = i + 2; }
         else { file = av[i]; i = i + 1; }
     }
-    if (strEq(file, "")) { Terminal.log("uso: lex build <arquivo.lex> [-o saida] [--target native|wasm|macos-x64|macos-arm64] [--watch]"); return 1; }
+    if (strEq(file, "")) {
+        Terminal.log("uso: lex build <arquivo.lex> [-o saida] [--watch]");
+        Terminal.log("     [--target native|wasm|linux-x64|linux-arm64|windows-x64|windows-arm64|macos-x64|macos-arm64]");
+        return 1;
+    }
+    const wasm: bool = strEq(tgt, "wasm") || strEq(tgt, "wasm32");
+    const xt: CrossT = resolveCross(tgt);
     if (strEq(out, "")) {
-        if (wasm) { out = "a.wasm"; } else { out = "a.out"; }
+        if (wasm) { out = "a.wasm"; }
+        else { out = concat("a.out", xt.ext); }
     }
     if (wasm) {
         if (buildWasm(file, out) != 0) { return 1; }
         Terminal.log(`ok (wasm): ${file} -> ${out}`);
         return 0;
     }
-    if (buildFileT(file, out, flags) != 0) { return 1; }
+    if (!strEq(xt.os, "")) {                       // alias de cross conhecido
+        if (buildCross(file, out, xt) != 0) { return 1; }
+        Terminal.log(`ok (${tgt}): ${file} -> ${out}`);
+        return 0;
+    }
+    if (!strEq(tgt, "native")) {
+        Terminal.log(`erro: alvo desconhecido '${tgt}' (use: native, wasm, linux-x64, linux-arm64, windows-x64, windows-arm64, macos-x64, macos-arm64)`);
+        return 1;
+    }
+    if (buildFileT(file, out, "") != 0) { return 1; }
     Terminal.log(`ok: ${file} -> ${out}`);
     if (watch) { return watchLoop(file, out); }
     return 0;

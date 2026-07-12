@@ -1728,10 +1728,9 @@ class Codegen {
         // certos p/ ponteiro e void — é o que faz o mesmo .ll servir no nativo (ptr
         // = 64 bits) E no wasm32 (ptr = 32 bits). Os valores em lex seguem células
         // i64; a conversão acontece só na borda da chamada (ver rtCall).
-        if (this.target == 1) {                          // wasm32
-            this.raw("target triple = \"wasm32-unknown-unknown\"");
-            this.raw("target datalayout = \"e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-n32:64-S128\"");
-        }
+        // Sem `target triple`/`datalayout`: a IR é AGNÓSTICA de alvo. Ela usa `ptr`
+        // opaco e células i64, e quem fixa o alvo é o `clang --target=…` que compila
+        // o .ll. O mesmo arquivo serve p/ nativo, wasm32, linux e windows.
         this.raw("@.lex_fmt_int = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\"");
         this.raw("@.lex_fmt_str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"");
         this.raw("declare i32 @printf(ptr, ...)");
