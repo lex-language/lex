@@ -102,12 +102,21 @@ class Template extends Expr {
     constructor(parts: Expr[]) { this.parts = parts }
 }
 // um braço de `match`: padrão `Tipo bind` (bind="" e pat="_" → curinga) e corpo
+// kind: 0=tag de classe, 1=literal int, 2=literal string, 3=faixa a..b, 4=curinga/binding
 class MatchArm {
-    pat: string
-    bind: string
+    kind: i64
+    pat: string         // nome da classe (0) | valor string (2) | nome do binding (4)
+    bind: string        // variável ligada (0/4)
+    lo: i64             // literal int (1) | início da faixa (3)
+    hi: i64             // fim da faixa (3, exclusivo)
+    hasGuard: bool
+    guard: Expr         // condição `if` (válida se hasGuard)
     body: Expr
-    constructor(pat: string, bind: string, body: Expr) {
-        this.pat = pat; this.bind = bind; this.body = body
+    constructor(kind: i64, pat: string, bind: string, lo: i64, hi: i64,
+        hasGuard: bool, guard: Expr, body: Expr) {
+        this.kind = kind; this.pat = pat; this.bind = bind
+        this.lo = lo; this.hi = hi; this.hasGuard = hasGuard
+        this.guard = guard; this.body = body
     }
 }
 class Match extends Expr {
@@ -534,16 +543,41 @@ class Parser {
             if (this.peekKind() == Tok.Comma || this.peekKind() == Tok.Semicolon) {
                 this.advance(); continue;
             }
-            const pat: string = this.advance().text;     // Tipo, ou "_"
-            let bind: string = "";
-            if (!strEq(pat, "_")) { bind = this.advance().text; }
-            this.expect(Tok.FatArrow);
-            const body: Expr = this.parseExpr();
-            arms.push(new MatchArm(pat, bind, body));
+            arms.push(this.parseMatchArm());
             if (this.peekKind() == Tok.Comma) { this.advance(); }
         }
         this.expect(Tok.RBrace);
         return new Match(subj, arms);
+    }
+
+    // um braço de match: classifica o padrão (tag de classe / literal / faixa /
+    // curinga-binding), guarda `if` opcional, `=> corpo`.
+    parseMatchArm(): MatchArm {
+        let kind: i64 = 4;
+        let pat: string = "";
+        let bind: string = "";
+        let lo: i64 = 0;
+        let hi: i64 = 0;
+        const k: Tok = this.peekKind();
+        if (k == Tok.Str) {                          // "lit" => ...
+            kind = 2; pat = this.advance().text;
+        } else if (k == Tok.Int) {                   // 42 =>  ou  10..50 =>
+            lo = this.advance().ival;
+            if (this.peekKind() == Tok.DotDot) {
+                this.advance(); hi = this.advance().ival; kind = 3;
+            } else { kind = 1; }
+        } else {                                     // Ident: classe, binding ou "_"
+            const name: string = this.advance().text;
+            if (strEq(name, "_")) { kind = 4; bind = ""; }
+            else if (this.peekKind() == Tok.Ident) { kind = 0; pat = name; bind = this.advance().text; }
+            else { kind = 4; bind = name; }          // binding (casa tudo, liga `name`)
+        }
+        let hasGuard: bool = false;
+        let guard: Expr = new IntLit(0);
+        if (this.peekKind() == Tok.If) { this.advance(); guard = this.parseExpr(); hasGuard = true; }
+        this.expect(Tok.FatArrow);
+        const body: Expr = this.parseExpr();
+        return new MatchArm(kind, pat, bind, lo, hi, hasGuard, guard, body);
     }
 
     // `{}`/`{ "k": v, ... }` (map) ou `{ ident: v, ... }` (struct). O `{` já saiu.
@@ -1066,8 +1100,12 @@ fn printList(items: Expr[]): string {
 }
 
 fn printArm(a: MatchArm): string {
-    if (strEq(a.pat, "_")) { return `(_ ${printExpr(a.body)})`; }
-    return `(${a.pat} ${a.bind} ${printExpr(a.body)})`;
+    if (a.kind == 0) { return `(${a.pat} ${a.bind} ${printExpr(a.body)})`; }
+    if (a.kind == 1) { return `(${str(a.lo)} ${printExpr(a.body)})`; }
+    if (a.kind == 2) { return `(\"${a.pat}\" ${printExpr(a.body)})`; }
+    if (a.kind == 3) { return `(${str(a.lo)}..${str(a.hi)} ${printExpr(a.body)})`; }
+    if (strEq(a.bind, "")) { return `(_ ${printExpr(a.body)})`; }
+    return `(${a.bind} ${printExpr(a.body)})`;
 }
 fn printMatch(m: Match): string {
     let s: string = `(match ${printExpr(m.subject)}`;

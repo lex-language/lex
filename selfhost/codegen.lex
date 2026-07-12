@@ -23,7 +23,7 @@
 import { lexSrc, Tok } from "./lexer"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call,
-    ArrayLit, Field, MethodCall, Index, MapLit, Template, Match, Lambda,
+    ArrayLit, Field, MethodCall, Index, MapLit, Template, Match, MatchArm, Lambda,
     TryExpr, CatchExpr, SpawnExpr, AwaitExpr,
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, FailStmt, DeferStmt, Func, Param, Program, Parser
@@ -1162,6 +1162,62 @@ class Codegen {
     // match (subj) { Classe bind => corpo, _ => corpo } como EXPRESSÃO.
     // Carrega a tag (slot 0 do objeto) e compara com a tag de cada classe; o
     // resultado do braço que casar vai p/ um alloca, lido no fim (sem phi).
+    // condição estrutural de um braço (i1): tag de classe, literal int/string ou faixa.
+    matchCond(arm: MatchArm, subj: string, tag: string): string {
+        if (arm.kind == 0) {                                  // tag de classe
+            const at: i64 = this.sema.classes.indexOfDecl(arm.pat);
+            const cb: string = this.newTmp();
+            this.emit(`  ${cb} = icmp eq i64 ${tag}, ${at}`);
+            return cb;
+        }
+        if (arm.kind == 1) {                                  // literal int
+            const cb: string = this.newTmp();
+            this.emit(`  ${cb} = icmp eq i64 ${subj}, ${arm.lo}`);
+            return cb;
+        }
+        if (arm.kind == 2) {                                  // literal string
+            const sp: string = this.genStrLit(arm.pat);
+            const eq: string = this.emitCall("__lex_str_eq", `i64 ${subj}, i64 ${sp}`);
+            const cb: string = this.newTmp();
+            this.emit(`  ${cb} = icmp ne i64 ${eq}, 0`);
+            return cb;
+        }
+        const ge: string = this.newTmp();                     // faixa [lo, hi)
+        this.emit(`  ${ge} = icmp sge i64 ${subj}, ${arm.lo}`);
+        const lt: string = this.newTmp();
+        this.emit(`  ${lt} = icmp slt i64 ${subj}, ${arm.hi}`);
+        const cb: string = this.newTmp();
+        this.emit(`  ${cb} = and i1 ${ge}, ${lt}`);
+        return cb;
+    }
+    // braço com literal/faixa e/ou guarda. (Os casos tag-de-classe e curinga SEM
+    // guarda ficam no caminho antigo do genMatch, byte-idêntico p/ o bootstrap.)
+    genMatchArm(arm: MatchArm, subj: string, sa: string, tag: string, ra: string, lend: string) {
+        const lno: string = this.newLabel();
+        if (arm.kind != 4) {                     // curinga/binding casa sempre
+            const cb: string = this.matchCond(arm, subj, tag);
+            const lyes: string = this.newLabel();
+            this.emit(`  br i1 ${cb}, label %${lyes}, label %${lno}`);
+            this.term = true;
+            this.label(lyes);
+        }
+        this.bindPush(arm.bind, sa, "?");        // liga ANTES da guarda (`x if x < 10`)
+        if (arm.hasGuard) {
+            const g: string = this.genExpr(arm.guard);
+            const gc: string = this.newTmp();
+            this.emit(`  ${gc} = icmp ne i64 ${g}, 0`);
+            const lg: string = this.newLabel();
+            this.emit(`  br i1 ${gc}, label %${lg}, label %${lno}`);
+            this.term = true;
+            this.label(lg);
+        }
+        const v: string = this.genExpr(arm.body);
+        this.bindPop();
+        this.emit(`  store i64 ${v}, ptr ${ra}`);
+        if (!this.term) { this.emit(`  br label %${lend}`); this.term = true; }
+        this.label(lno);
+    }
+
     genMatch(mt: Match): string {
         const subj: string = this.genExpr(mt.subject);
         const id: i64 = this.matchN;
@@ -1171,21 +1227,27 @@ class Codegen {
         this.emit(`  ${sa} = alloca i64`);
         this.emit(`  store i64 ${subj}, ptr ${sa}`);
         this.emit(`  ${ra} = alloca i64`);
-        // tag = load slot 0
-        const sp: string = this.newTmp();
-        this.emit(`  ${sp} = inttoptr i64 ${subj} to ptr`);
-        const tag: string = this.newTmp();
-        this.emit(`  ${tag} = load i64, ptr ${sp}`);
+        // a tag (slot 0) só existe em OBJETO: carrega só se houver braço de classe.
+        // (`match (n)` com n inteiro faria `inttoptr 3; load` → SEGV.)
+        let hasClassArm: bool = false;
+        for (const arm of mt.arms) { if (arm.kind == 0) { hasClassArm = true; } }
+        let tag: string = "";
+        if (hasClassArm) {
+            const sp: string = this.newTmp();
+            this.emit(`  ${sp} = inttoptr i64 ${subj} to ptr`);
+            tag = this.newTmp();
+            this.emit(`  ${tag} = load i64, ptr ${sp}`);
+        }
 
         const lend: string = this.newLabel();
         for (const arm of mt.arms) {
-            if (strEq(arm.pat, "_")) {
+            if (arm.kind == 4 && !arm.hasGuard) {             // curinga `_` / binding
                 this.bindPush(arm.bind, sa, "?");
                 const v: string = this.genExpr(arm.body);
                 this.bindPop();
                 this.emit(`  store i64 ${v}, ptr ${ra}`);
                 if (!this.term) { this.emit(`  br label %${lend}`); this.term = true; }
-            } else {
+            } else if (arm.kind == 0 && !arm.hasGuard) {      // tag de classe
                 const at: i64 = this.sema.classes.indexOfDecl(arm.pat);
                 const cb: string = this.newTmp();
                 this.emit(`  ${cb} = icmp eq i64 ${tag}, ${at}`);
@@ -1200,6 +1262,8 @@ class Codegen {
                 this.emit(`  store i64 ${v}, ptr ${ra}`);
                 if (!this.term) { this.emit(`  br label %${lend}`); this.term = true; }
                 this.label(lno);
+            } else {                                          // literal/faixa/guarda
+                this.genMatchArm(arm, subj, sa, tag, ra, lend);
             }
         }
         // nenhum braço casou (sem curinga): resultado 0
