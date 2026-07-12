@@ -1,6 +1,6 @@
 # CI do lex — o compilador é escrito EM LEX (não há mais Rust no repo).
 #
-# O bootstrap parte da SEMENTE (`selfhost/lex-seed.ll.gz`, o LLVM IR do próprio
+# O bootstrap parte da SEMENTE (`src/lex-seed.ll.gz`, o LLVM IR do próprio
 # compilador no ponto-fixo): clang a transforma em `bin/lex`, e a partir daí o lex
 # recompila a si mesmo a partir do fonte. A única dependência é o clang/LLVM.
 name: ci
@@ -26,25 +26,30 @@ jobs:
 
       # Constrói o lex a partir da semente E valida o ponto-fixo (o compilador
       # reproduz a si mesmo byte a byte). Se a semente estiver dessincronizada do
-      # fonte, isto falha — rode ./selfhost/regen-seed.sh e commite.
+      # fonte, isto falha — rode ./scripts/regen-seed.sh e commite.
       - name: bootstrap a partir da semente
-        run: ./selfhost/build-seed.sh
+        run: ./scripts/build-seed.sh
 
+      # a suíte por módulo (o portão de paridade roda no passo seguinte)
       - name: suíte de testes
-        run: for f in tests/*.test.lex; do ./bin/lex test "$f" || exit 1; done
+        run: |
+          for f in tests/*.test.lex; do
+            [ "$f" = "tests/parity.test.lex" ] && continue
+            ./bin/lex test "$f" || exit 1
+          done
 
       - name: portão de paridade (linguagem completa, e2e)
-        run: ./bin/lex test selfhost/parity.test.lex
+        run: ./bin/lex test tests/parity.test.lex
 
       - name: check (tipos/sintaxe) sem falso-positivo no próprio repo
         run: |
-          for f in selfhost/*.lex std/*.lex examples/*.lex; do
+          for f in src/*.lex std/*.lex examples/*.lex; do
             out=$(./bin/lex check "$f")
             [ "$out" = "[]" ] || { echo "diagnóstico inesperado em $f: $out"; exit 1; }
           done
 
       - name: fmt --check
-        run: ./bin/lex fmt --check selfhost/*.lex std/*.lex
+        run: ./bin/lex fmt --check src/*.lex std/*.lex
 
       - name: exemplo.lex compila e roda
         run: ./bin/lex run examples/exemplo.lex

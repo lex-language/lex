@@ -3,7 +3,7 @@
 // Espelha src/lexer.rs + src/token.rs: fonte → sequência de tokens. A fonte é
 // tratada como bytes (ASCII), lidos em O(1) com peek8 sobre a string (char*).
 //
-// Pendências (TODO, ver selfhost/README.md):
+// Pendências (TODO, ver src/README.md):
 //   - template literals (`...${}...`) e JSX: por ora um scan ingênuo até a
 //     crase de fecho, produzindo um único Tok.Template com o texto cru.
 

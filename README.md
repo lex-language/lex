@@ -7,7 +7,7 @@ o TypeScript é fraco: tipos inteiros de verdade (`i32`/`i64`), erros checados
 em tempo de compilação e threads reais — compilada **direto para LLVM IR**,
 sem GC e sem runtime.
 
-O compilador **é escrito na própria linguagem** (`selfhost/`). Ele compila a si
+O compilador **é escrito na própria linguagem** (`src/`). Ele compila a si
 mesmo até o **ponto-fixo** — recompilar o compilador com ele mesmo reproduz o
 mesmo LLVM IR, byte a byte. Não há Rust no repositório: o único requisito é o
 clang/LLVM.
@@ -24,19 +24,19 @@ fonte .lex → lexer → tokens → parser → AST → sema/typecheck → codege
 
 ## Bootstrap (como o compilador nasce sem um compilador)
 
-O repositório traz uma **semente**: [`selfhost/lex-seed.ll.gz`](selfhost/lex-seed.ll.gz),
+O repositório traz uma **semente**: [`src/lex-seed.ll.gz`](src/lex-seed.ll.gz),
 que é o LLVM IR do próprio compilador-em-lex, no ponto-fixo. O clang a transforma
 num `bin/lex`, e a partir daí o `lex` recompila a si mesmo **a partir do fonte**:
 
 ```sh
-./selfhost/build-seed.sh     # -> bin/lex  (só precisa de clang)
+./scripts/build-seed.sh     # -> bin/lex  (só precisa de clang)
 ```
 
-O script termina validando o ponto-fixo. Se você mudar `selfhost/*.lex`, regere a
+O script termina validando o ponto-fixo. Se você mudar `src/*.lex`, regere a
 semente antes de commitar:
 
 ```sh
-./selfhost/regen-seed.sh
+./scripts/regen-seed.sh
 ```
 
 > A IR da semente é **agnóstica de alvo** (usa `ptr` opaco e células i64), então o
@@ -45,7 +45,7 @@ semente antes de commitar:
 ## Uso
 
 ```sh
-./selfhost/build-seed.sh         # constrói bin/lex a partir da semente
+./scripts/build-seed.sh         # constrói bin/lex a partir da semente
 
 ./bin/lex version
 
@@ -961,12 +961,12 @@ conteúdo, floats, coleções), `toBeTruthy`/`toBeFalsy`, `toBeGreaterThan`/
 
 - [`tests/`](tests/) — a suíte por módulo (lexer, parser, sema, codegen, fmt, json,
   toml, semver, pkg, diag, interp, math, strings, e2e). Rode `./bin/lex test tests/*.test.lex`.
-- [`selfhost/parity.test.lex`](selfhost/parity.test.lex) — o **portão de paridade**:
+- [`tests/parity.test.lex`](tests/parity.test.lex) — o **portão de paridade**:
   21 programas de linguagem completa (OOP/vtable, genéricos, `try`/`catch`, `async`/
   `await`, closures com captura, `enum`, `match` com guarda/faixa/destructuring,
   campos `static`, indexação de Map/JSON…) que são compilados, linkados e
   **executados**, conferindo o exit code.
-- [`selfhost/bootstrap.sh`](selfhost/bootstrap.sh) — o **ponto-fixo**: o compilador
+- [`scripts/bootstrap.sh`](scripts/bootstrap.sh) — o **ponto-fixo**: o compilador
   recompila a si mesmo duas vezes e a IR tem de sair byte a byte igual.
 
 ## Editor (VS Code)
@@ -989,7 +989,7 @@ cp -R editors/vscode-lex ~/.vscode/extensions/lex.lex-lang-0.1.0
 # no VS Code: Cmd+Shift+P -> "Developer: Reload Window"
 ```
 
-O cliente acha o servidor procurando `bin/lex` na raiz do workspace — então rode `./selfhost/build-seed.sh`
+O cliente acha o servidor procurando `bin/lex` na raiz do workspace — então rode `./scripts/build-seed.sh`
 antes. Para apontar um binário específico, use a setting `lex.server.path`. O
 cliente **não** usa o `lex` do PATH por padrão (em Unix `/usr/bin/lex` costuma
 ser o flex). Comando `lex: Reiniciar o Language Server` reinicia o `lex lsp`.
@@ -1013,7 +1013,7 @@ require("lex").setup()                          -- acha o binário no projeto
 - [x] Erros como valores forçados (`!`, `fail`, `try`, `catch`)
 - [x] Threads (`spawn`/`join` via pthreads, sem runtime)
 - [x] `async`/`await` (açúcar sobre threads reais: `async fn` → `Future<T>` via spawn, `await` → join; **sem runtime de async**, sem function coloring/event-loop) ([`examples/exemplo.lex`](examples/exemplo.lex))
-- [x] Suíte de testes EM LEX: por módulo (`tests/`) + portão de paridade ponta-a-ponta (`selfhost/parity.test.lex`) + ponto-fixo do bootstrap
+- [x] Suíte de testes EM LEX: por módulo (`tests/`) + portão de paridade ponta-a-ponta (`tests/parity.test.lex`) + ponto-fixo do bootstrap
 - [x] Biblioteca de testes **nativa** ([`std/test.lex`](std/test.lex)) + runner `lex test`: arquivos `*.test.lex` SEM `main`, só `describe`/`test`/`it`/`expect(x).toBe(y)` (um `expect` p/ qualquer tipo, com matchers); saída colorida e exit code pra CI ([`examples/tests/`](examples/tests/))
 - [x] Sintaxe TypeScript-like (`function`/`fn`, `const`, `: tipo`)
 - [x] Loops (`while`)

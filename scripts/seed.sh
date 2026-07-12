@@ -6,9 +6,9 @@
 # é escrito — compila a si mesmo + a suíte tests/, mas NÃO programas de linguagem
 # completa (ex.: examples/exemplo.lex usa float-arith/try/spawn/struct-literal,
 # fora do subset). O src/ (Rust) segue sendo o compilador de linguagem-completa
-# (e o único com wasm/cross-compile/float). Ver selfhost/REMOVER-RUST.md.
+# (e o único com wasm/cross-compile/float). Ver src/REMOVER-RUST.md.
 #
-# Rode da raiz do repo:  ./selfhost/seed.sh
+# Rode da raiz do repo:  ./scripts/seed.sh
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -17,7 +17,7 @@ STAGE0=/tmp/lex-stage0
 STAGE1=/tmp/lex-stage1
 
 echo "==> 1. Rust compila o lex unificado -> stage0"
-$SEEDLEX selfhost/lexcli.lex -o "$STAGE0" | tail -1
+$SEEDLEX src/lexcli.lex -o "$STAGE0" | tail -1
 
 echo
 echo "==> 2. o stage0 (em lex) faz o fluxo, SEM Rust:"
@@ -28,11 +28,11 @@ EOF
 echo -n "   - run:   "; "$STAGE0" run /tmp/seed_demo.lex; echo "           (exit=$? — fib(10)=55)"
 echo -n "   - test:  "; "$STAGE0" test tests/semver.test.lex | tail -1
 echo -n "   - check: "; printf 'fn main(): i32 { return zzz }' > /tmp/seed_bad.lex; "$STAGE0" check /tmp/seed_bad.lex
-echo -n "   - fmt:   "; "$STAGE0" fmt --check selfhost/fmt.lex >/dev/null 2>&1 && echo "fmt.lex já formatado (ok)"
+echo -n "   - fmt:   "; "$STAGE0" fmt --check src/fmt.lex >/dev/null 2>&1 && echo "fmt.lex já formatado (ok)"
 
 echo
 echo "==> 3. o stage0 reconstrói a SI MESMO -> stage1 (auto-suficiência do subset)"
-"$STAGE0" build selfhost/lexcli.lex -o "$STAGE1" | tail -1
+"$STAGE0" build src/lexcli.lex -o "$STAGE1" | tail -1
 echo -n "   - stage1: "; "$STAGE1" version
 
 echo

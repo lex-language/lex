@@ -1,9 +1,9 @@
-// Testes do lexer-em-lex (Fase 1). Rode com:  lex test selfhost
-import { lexSrc, Token, Tok } from "../selfhost/lexer"
+// Testes do lexer-em-lex (Fase 1). Rode com:  lex test tests/
+import { lexSrc, Token, Tok } from "../src/lexer"
 
 // Compara a sequência de tipos de token elemento a elemento. (Comparar o array
 // inteiro de uma vez não dá: o expect só estrutura arrays LITERAIS; um array
-// vindo de função vira ponteiro-como-número — ver selfhost/README.md.)
+// vindo de função vira ponteiro-como-número — ver src/README.md.)
 fn expectKinds(got: Token[], want: Tok[]) {
     expect(got.len()).toBe(want.len());
     for (let i: i64 = 0; i < want.len(); i = i + 1) {

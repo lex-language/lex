@@ -14,7 +14,7 @@ nada novo no compilador), depois as primitivas de host, depois o backend.
 - [x] **F1 — Lexer** (`lexer.lex`): fonte → tokens. Cobre espaços/quebras,
       comentários de linha, strings com escapes, números (int/float com valor
       via `parseFloat`), identificadores + todas as palavras-chave, e toda a
-      pontuação/operadores. Testado em `lexer.test.lex` (`lex test selfhost`).
+      pontuação/operadores. Testado em `lexer.test.lex` (`lex test tests/*.test.lex`).
       Pendência marcada no arquivo: template literals e JSX (scan ingênuo por ora).
 - [x] **Correções de linguagem** (no compilador Rust) que o front-end exigiu:
       - `else if` (antes o `else` exigia bloco) — `src/parser.rs`.
@@ -26,7 +26,7 @@ nada novo no compilador), depois as primitivas de host, depois o backend.
       `class` (nó base `Expr`/`Stmt` + subclasses), percorrida com `match` por
       padrão de tipo. Testado em `parser.test.lex` (62 asserções) comparando a AST
       renderizada como S-expression. **Cobre todo o subset que o próprio
-      `selfhost/*.lex` usa** (verificado: `parseModule` consome lexer/parser/codegen/
+      `src/*.lex` usa** (verificado: `parseModule` consome lexer/parser/codegen/
       interp/lexc/lexi até o `Eof`, sem dessincronizar):
       - Expressões: escada de precedência (precedence climbing), unários, chamadas,
         array literal, pós-fixos (`.campo`/`.metodo()`/`[i]`), `new C(args)`,
@@ -73,7 +73,7 @@ nada novo no compilador), depois as primitivas de host, depois o backend.
       compilador lex de produção usa o clang como linker.
 - [~] **F6 — Remoção completa do Rust**: **compilador-core BOOTSTRAPADO** ✅ — o
       compilador-em-lex compila o seu próprio fonte e é estável (ponto-fixo, ver
-      `selfhost/bootstrap.sh`). F6.1–F6.6 feitas: parser, sema (classes+tipos),
+      `src/bootstrap.sh`). F6.1–F6.6 feitas: parser, sema (classes+tipos),
       codegen (dados+host+classes+match), módulos e bootstrap. **Falta** portar o
       resto do CLI (F6.7–F6.11: fmt, pkg, LSP, wasm/cross-compile, JSON/watch) pra
       aposentar o `src/` inteiro. **Plano completo na seção
@@ -82,8 +82,8 @@ nada novo no compilador), depois as primitivas de host, depois o backend.
 ## Como rodar
 
 ```sh
-lex test selfhost                       # toda a suíte (lexer, parser, sema, codegen, interp, e2e)
-./selfhost/bootstrap.sh                 # prova o self-hosting (ponto-fixo de 3 estágios)
+lex test tests/*.test.lex                     # toda a suíte (lexer, parser, sema, codegen, interp, e2e)
+./scripts/bootstrap.sh                 # prova o self-hosting (ponto-fixo de 3 estágios)
 
 cat > /tmp/p.lex <<'EOF'
 fn fib(n: i64): i64 { if (n < 2) { return n } return fib(n-1) + fib(n-2) }
@@ -91,14 +91,14 @@ fn main(): i64 { print(fib(10)) return fib(10) }
 EOF
 
 # (A) COMPILAR para binário nativo (usa clang como linker):
-lex selfhost/lexc.lex -o /tmp/lexc
+lex src/lexc.lex -o /tmp/lexc
 /tmp/lexc /tmp/p.lex /tmp/p && /tmp/p; echo $?      # imprime 55, exit 55
 
 # o lexc self-hosted compila o PRÓPRIO compilador (e o resultado roda):
-/tmp/lexc selfhost/lexc.lex /tmp/lexc1 && /tmp/lexc1 /tmp/p.lex /tmp/p && /tmp/p; echo $?
+/tmp/lexc src/lexc.lex /tmp/lexc1 && /tmp/lexc1 /tmp/p.lex /tmp/p && /tmp/p; echo $?
 
 # (B) INTERPRETAR, sem clang nem LLVM (lex puro):
-lex selfhost/lexi.lex -o /tmp/lexi
+lex src/lexi.lex -o /tmp/lexi
 /tmp/lexi /tmp/p.lex; echo $?                       # imprime 55, exit 55
 ```
 
@@ -110,7 +110,7 @@ completo + loader de módulos + fmt + TOML/semver + pkg(manifesto) + JSON + diag
 `--target`/`--watch`, num binário só) em lex: ~5500 linhas, **306 asserções** +
 ponto-fixo (`bootstrap.sh`) + **semente stage0** (`seed.sh`: o lex em lex faz o
 fluxo e se reconstrói SEM Rust). Caminhos:
-- **Self-hosting** — `lexc` (em lex) compila `selfhost/lexc.lex` (a si mesmo) e o
+- **Self-hosting** — `lexc` (em lex) compila `src/lexc.lex` (a si mesmo) e o
   IR é estável entre estágios (`lexc1.ll == lexc2.ll`). O Rust não é mais
   necessário pra buildar o compilador-core.
 - **Nativo** — `fonte → tokens → AST → sema → LLVM IR → clang+runtime.c → binário`.
@@ -133,7 +133,7 @@ lex. Dois insights cortam o esforço:
    `__lex_args`, `__lex_system`, `__lex_fs_read/write`. "Remover Rust" ≠ "remover
    C": o runtime continua C, compilado pelo clang, exatamente como na produção.
 
-2. **O alvo do bootstrap é só o que `selfhost/*.lex` USA pra compilar a si
+2. **O alvo do bootstrap é só o que `src/*.lex` USA pra compilar a si
    mesmo** — não a linguagem inteira. O fonte do compilador **NÃO usa** (e
    portanto fica fora do escopo): `try/catch/defer/fail`, `type` aliases,
    `interface`, struct literals, arrow functions, ternário, optional chaining,
@@ -165,7 +165,7 @@ Cada etapa tem um **portão de validação** que precisa passar antes da próxim
       literals, `for-of`, `for` C-style, `Map<>`, `new`, map/array literal,
       script-mode (`main` sintetizado). Puro `texto→dados`, sem runtime.
       *Portão OK*: 62 asserções verdes + `parseModule` consome todos os
-      `selfhost/*.lex` até o `Eof` sem dessincronizar.
+      `src/*.lex` até o `Eof` sem dessincronizar.
 - [~] **F6.2 — Sema estrutural** (`sema.lex`, novo) — NÃO é checador de tipos
       completo; só o esqueleto que o codegen exige. Destrava F6.3 e F6.4.
       - [x] **Tabela de classes** (`ClassTable`): por classe, campos com slot
@@ -203,7 +203,7 @@ Cada etapa tem um **portão de validação** que precisa passar antes da próxim
       o loader e linka `src/runtime.c`. *Portão OK*: import de classe entre arquivos
       compila+roda (e2e) + o próprio compilador (5 módulos) compila como uma unidade.
 - [x] **F6.6 — Bootstrap completo** — o compilador-em-lex compila o SEU PRÓPRIO
-      fonte e o resultado é estável. *Portão OK* (`selfhost/bootstrap.sh`): stage0
+      fonte e o resultado é estável. *Portão OK* (`src/bootstrap.sh`): stage0
       (Rust) → lexc0; lexc1 = lexc0 compilando lexc.lex; lexc2 = lexc1 compilando
       lexc.lex; **`lexc1.ll == lexc2.ll` byte a byte** (ponto-fixo, ~15,7k linhas de
       IR). **O Rust não é mais necessário pra buildar o compilador-core** — basta
@@ -308,12 +308,12 @@ maior que o core, mas todas já em cima de um lex self-hosted). Atividades:
 ### `lex` unificado (`lexcli.lex`)
 
 Um único binário-em-lex que despacha subcomandos delegando aos módulos:
-`lex build/run/fmt/version`. Compila a si mesmo (`lex build selfhost/lexcli.lex`
+`lex build/run/fmt/version`. Compila a si mesmo (`lex build src/lexcli.lex`
 → binário que roda). É o embrião do `lex` de produção escrito em lex.
 
 ### O que AINDA falta pra deletar o `src/` de verdade (honesto)
 
-> **Roadmap fase-a-fase detalhado: [`selfhost/REMOVER-RUST.md`](REMOVER-RUST.md)**
+> **Roadmap fase-a-fase detalhado: [`src/REMOVER-RUST.md`](REMOVER-RUST.md)**
 > (arquivos, features, dependências, validação e esforço de cada etapa, A→I).
 
 O compilador-core está auto-hospedado e várias ferramentas portadas, mas o `lex`

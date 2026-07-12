@@ -1,13 +1,13 @@
 // e2e.test.lex — prova de ponta a ponta do compilador-em-lex (Fase 5/6).
 // Para cada caso: compila o fonte (subset) para LLVM IR, linka com clang e RODA
 // o binário nativo, conferindo o exit code. Tudo dirigido pelo próprio lex.
-// Requer clang no PATH e /tmp gravável. Rode com:  lex test selfhost
-import { compileToIR } from "../selfhost/codegen"
-import { compileFileToIR } from "../selfhost/modloader"
+// Requer clang no PATH e /tmp gravável. Rode com:  lex test tests/
+import { compileToIR } from "../src/codegen"
+import { compileFileToIR } from "../src/modloader"
 
 // fonte (subset) -> exit code do binário nativo produzido (-1 se o clang falhar).
 // Linka o runtime C (src/runtime.c) p/ resolver os __lex_* (strings/arrays/etc.);
-// roda da raiz do repo (onde `lex test selfhost` é chamado).
+// roda da raiz do repo (onde `lex test` é chamado).
 fn compileAndRun(src: string, name: string): i64 {
     const ll: string = concat(concat("/tmp/lex_e2e_", name), ".ll");
     const bin: string = concat("/tmp/lex_e2e_", name);

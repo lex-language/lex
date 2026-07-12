@@ -6,7 +6,7 @@
 // um .ll → chama o clang pra montar+linkar o executável nativo. Tudo dirigido
 // pelo próprio lex (args/system/readFile/writeFile são builtins de host).
 //
-// Subset suportado: ver selfhost/codegen.lex. Compila programas com funções
+// Subset suportado: ver src/codegen.lex. Compila programas com funções
 // i64, if/while, aritmética/comparações e chamadas; `main(): i32` vira o
 // exit code.
 import { compileFileToIR } from "./modloader"

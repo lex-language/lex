@@ -23,7 +23,7 @@
 /registry-site/data
 /registry
 
-# binário do compilador (gerado por ./selfhost/build-seed.sh)
+# binário do compilador (gerado por ./scripts/build-seed.sh)
 bin/
 
 .DS_Store

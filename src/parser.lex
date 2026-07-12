@@ -5,7 +5,7 @@
 // o mesmo mecanismo que a sema/codegen vão usar. O operador binário/unário é
 // guardado como o `Tok` do lexer (sem um enum BinOp separado).
 //
-// Cobertura (F6.1 — cobre todo o subset que o próprio selfhost/*.lex usa):
+// Cobertura (F6.1 — cobre todo o subset que o próprio src/*.lex usa):
 //   - Expressões: literais (int/float/bool/string), variáveis, unários (! - ~),
 //     toda a escada de precedência (precedence climbing), parênteses, chamadas,
 //     array literal, pós-fixos `.campo`/`.metodo(args)`/`[i]`, `new C(args)`,

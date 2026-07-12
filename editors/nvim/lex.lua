@@ -11,7 +11,7 @@
 
 local M = {}
 
--- Sobe da pasta do arquivo procurando bin/lex (gerado por ./selfhost/build-seed.sh).
+-- Sobe da pasta do arquivo procurando bin/lex (gerado por ./scripts/build-seed.sh).
 -- NÃO cai pro `lex` do PATH: em Unix /usr/bin/lex é o flex.
 local function find_binary(start)
   local dir = vim.fn.fnamemodify(start, ":p:h")
@@ -54,7 +54,7 @@ function M.setup(opts)
       local bin = opts.cmd or find_binary(file)
       if not bin then
         vim.notify(
-          "lex: binário não encontrado. Rode `./selfhost/build-seed.sh` ou "
+          "lex: binário não encontrado. Rode `./scripts/build-seed.sh` ou "
             .. "passe { cmd = '/caminho/lex' } para require('lex').setup().",
           vim.log.levels.WARN
         )

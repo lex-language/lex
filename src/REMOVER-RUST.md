@@ -1,6 +1,6 @@
 # Roadmap: eliminar o `src/` (Rust) — o que falta e como
 
-Estado atual (ver `selfhost/README.md` para detalhes): o **compilador-core está
+Estado atual (ver `src/README.md` para detalhes): o **compilador-core está
 auto-hospedado** (ponto-fixo provado por `bootstrap.sh`) e **8 ferramentas** estão
 portadas e testadas/smoke — fmt, TOML, semver, pkg(manifesto), JSON, diag, LSP,
 e o `lex` unificado (`lexcli.lex`). ~4.500 linhas de lex, 300 asserções verdes.
@@ -139,7 +139,7 @@ pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
 > main+lambdas excluem os globais dos allocas; funções normais mantêm (param/local
 > sombreia global homônimo — ex.: param `src` de `lexSrc` vs global `src` do `lexc`).
 > + métodos de string (`.contains`/`.startsWith`/`.endsWith`). *PARIDADE TOTAL*:
-> as **12 suítes** `selfhost/*.test.lex` passam sob o `lextest` (= `lex test` Rust).
+> as **12 suítes** `src/*.test.lex` passam sob o `lextest` (= `lex test` Rust).
 > O `lex test` agora roda **sem o Rust**. (Trade-off: nomes de const iguais entre
 > arrows compartilham slot — ok porque os testes rodam em sequência.)
 - **Driver** (`lextest.lex`, novo): `lex test <dir>` → `readDir`, filtra `*.test.lex`,
@@ -149,7 +149,7 @@ pra comparar int/string/float/array corretamente. Necessário p/ o `lex test`.
 - O `modloader` precisa resolver o módulo `"test"` → `std/test.lex` (resolução de
   `std/`, ver Fase F).
 - **Espelha:** `run_tests` + injeção do import em `src/main.rs`.
-- **Validar:** `lextest selfhost` reproduz o mesmo placar do `lex test` do Rust.
+- **Validar:** `lex test tests/` reproduz o mesmo placar do `lex test` do Rust.
 
 ## Fase D — Span tracking (lexer + parser)  ·  esforço: M  ·  ✅ FEITO
 **Por quê:** pré-requisito p/ diagnósticos com linha/coluna (Fase E).
@@ -175,7 +175,7 @@ dependência, a sema-em-lex precisa emitir diagnósticos.
 > + driver `lexcheck.lex`. Conjunto de DEFINIDOS = funções/classes/enums + `this`/
 > `Terminal` + params+locais (let/for-of/match-bind) de TODAS as funções; um `Var`
 > fora dele → `undefined variable: 'X'` com posição. Resolve imports (`loadProgram`)
-> → SEM falso-positivo em código real (`lexcheck selfhost/parser.lex` → `[]`). Saída
+> → SEM falso-positivo em código real (`lexcheck src/parser.lex` → `[]`). Saída
 > JSON `[{line,col,endLine,endCol,message}]` (0-based) compatível c/ o `lexlsp`.
 > *VALIDADO*: `return zzz`→undefined; ok→`[]`; parser.lex→`[]`. **FALTA p/ paridade**:
 > erros de sintaxe (parser é silencioso), tipo/aridade/campo inexistente, escopo
@@ -262,7 +262,7 @@ diagnósticos, espelhando ~103KB de Rust) é a peça mais pesada e a menos
 verificável de forma hermética. G/H agregam, mas não bloqueiam o `lex test`/`build`.
 
 Marcos verificáveis pelo caminho (não precisam esperar o fim):
-- depois de **C**: `lextest selfhost` roda a suíte SEM o Rust;
+- depois de **C**: `lex test tests/` roda a suíte SEM o Rust;
 - depois de **E**: `lexlsp` não chama mais o `lex check` do Rust;
 - depois de **F**: existe um único `lex` em lex pro dia a dia;
 - depois de **I**: `src/` deletado, stage0 se reconstrói (meta atingida).

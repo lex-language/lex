@@ -1,7 +1,7 @@
-// Testes da sema estrutural (F6.2). Rode com:  lex test selfhost
+// Testes da sema estrutural (F6.2). Rode com:  lex test tests/
 // Confere o layout de classes (slots de campo, vtable, herança+override, tag) e
 // os valores de enum — a informação que o codegen de classes (F6.4) consome.
-import { semaClassStr, semaFieldSlot, semaMethodIndex, semaEnumValue, inferType } from "../selfhost/sema"
+import { semaClassStr, semaFieldSlot, semaMethodIndex, semaEnumValue, inferType } from "../src/sema"
 
 describe("sema: tabela de classes", () => {
         test("classe com campos e constructor", () => {

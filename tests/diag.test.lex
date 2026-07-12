@@ -1,6 +1,6 @@
-// Testes do renderizador de diagnósticos (F6.11). Rode com:  lex test selfhost
+// Testes do renderizador de diagnósticos (F6.11). Rode com:  lex test tests/
 // Caminho sem-cor (determinístico), igual ao não-TTY do src/diag.rs.
-import { renderDiag } from "../selfhost/diag"
+import { renderDiag } from "../src/diag"
 
 describe("diag: render estilo rustc", () => {
         test("erro numa linha, caret sob o token", () => {

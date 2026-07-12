@@ -23,7 +23,7 @@ RUN ln -sf /usr/bin/clang-18 /usr/local/bin/clang \
 WORKDIR /src
 COPY . .
 # o compilador é escrito EM LEX: sai da semente (LLVM IR) via clang, sem Rust.
-RUN ./selfhost/build-seed.sh
+RUN ./scripts/build-seed.sh
 # binário estático do servidor (roda em qualquer linux-x64, inclusive scratch)
 RUN ./bin/lex build registry-site/server.lex --target linux-x64 -o /registry
 

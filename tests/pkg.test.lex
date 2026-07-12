@@ -1,6 +1,6 @@
-// Testes do núcleo do pkg manager (F6.8-C). Rode com:  lex test selfhost
-import { parseDep, normalizeGitUrl, newManifest, addDep, removeDep } from "../selfhost/pkg"
-import { parseToml } from "../selfhost/toml"
+// Testes do núcleo do pkg manager (F6.8-C). Rode com:  lex test tests/
+import { parseDep, normalizeGitUrl, newManifest, addDep, removeDep } from "../src/pkg"
+import { parseToml } from "../src/toml"
 
 describe("pkg: parse de spec de dependência", () => {
         test("registry (nome@req)", () => {
