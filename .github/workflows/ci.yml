@@ -43,13 +43,13 @@ jobs:
 
       - name: check (tipos/sintaxe) sem falso-positivo no próprio repo
         run: |
-          for f in src/*.lex std/*.lex examples/*.lex; do
+          for f in src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex examples/*.lex; do
             out=$(./bin/lex check "$f")
             [ "$out" = "[]" ] || { echo "diagnóstico inesperado em $f: $out"; exit 1; }
           done
 
       - name: fmt --check
-        run: ./bin/lex fmt --check src/*.lex std/*.lex
+        run: ./bin/lex fmt --check src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex
 
       - name: exemplo.lex compila e roda
         run: ./bin/lex run examples/exemplo.lex

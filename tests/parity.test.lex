@@ -4,7 +4,7 @@
 // Portado de tests/e2e.rs (que morreu junto com o compilador Rust). Cada caso é um
 // programa `main(): i32` que devolve 0 quando todas as verificações passam: o teste
 // compila o fonte, linka com clang e RODA o binário, conferindo o exit code.
-import { compileToIR } from "../src/codegen"
+import { compileToIR } from "../src/compiler/codegen"
 
 // fonte -> exit code do binário nativo (-1 se o clang falhar).
 fn runSrc(src: string, name: string): i64 {

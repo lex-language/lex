@@ -12,12 +12,12 @@
 //   lex version                           versão
 //
 // (wasm/cross-compile e o fetch de rede do pkg ainda faltam — ver REMOVER-RUST.md.)
-import { compileFileToIR, compileFileToIRT, findRuntime } from "./modloader"
-import { formatSource } from "./fmt"
-import { runTestFile } from "./testrunner"
-import { runCheck } from "./checker"
-import { runLsp } from "./lspserver"
-import { runPkg } from "./pkgcmd"
+import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
+import { formatSource } from "./tools/fmt"
+import { runTestFile } from "./tools/testrunner"
+import { runCheck } from "./tools/checker"
+import { runLsp } from "./tools/lspserver"
+import { runPkg } from "./tools/pkgcmd"
 
 fn hasSuffix(s: string, suf: string): bool {
     const sl: i64 = len(s);

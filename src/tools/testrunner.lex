@@ -1,9 +1,9 @@
 // testrunner.lex — núcleo do runner de testes (MÓDULO, só declarações).
 // Mescla o harness std/test.lex + o arquivo de teste num Program, anexa
 // `return testReport()` ao main, compila e roda; devolve o exit code (placar).
-import { ModuleLoader, findStd, findRuntime } from "./modloader"
-import { compileProgramToIR } from "./codegen"
-import { Expr, Program, ReturnStmt, Call } from "./parser"
+import { ModuleLoader, findStd, findRuntime } from "../compiler/modloader"
+import { compileProgramToIR } from "../compiler/codegen"
+import { Expr, Program, ReturnStmt, Call } from "../compiler/parser"
 
 fn runTestFile(entry: string): i64 {
     const ml: ModuleLoader = new ModuleLoader();

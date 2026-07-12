@@ -105,7 +105,7 @@ lex remove cores               # remove a dep (e poda transitivas órfãs)
 lex list                       # lista o que está instalado
 ```
 
-Depois de instalar, um *bare import* resolve no pacote — a busca é `std/`
+Depois de instalar, um *bare import* resolve no pacote — a busca é `src/std/`
 primeiro (os builtins ganham), depois `lex_modules/`:
 
 ```lex
@@ -401,7 +401,7 @@ Os `defer`s rodam em ordem **LIFO** e só se o fluxo passou por eles (cada um te
 uma flag) — valem em todo caminho de saída: `return`, `fail`, `try` que propaga,
 ou cair no fim. `poke8/16/32/64` e `peek8/16/32/64` leem/escrevem em offsets de
 bytes; as variantes `poke16be`/`poke32be` gravam em ordem de rede — é exatamente
-o que [`std/socket.lex`](std/socket.lex) usa para montar a `sockaddr_in` em lex
+o que [`src/std/socket.lex`](src/std/socket.lex) usa para montar a `sockaddr_in` em lex
 puro. Exemplo: [`examples/exemplo.lex`](examples/exemplo.lex).
 
 ### Filesystem
@@ -423,7 +423,7 @@ const nomes: string[] = readDir("/tmp/demo");
 Terminal.log(len(nomes));                      // 1
 ```
 
-A lib [`std/fs.lex`](std/fs.lex) acrescenta a camada idiomática: wrappers
+A lib [`src/std/fs.lex`](src/std/fs.lex) acrescenta a camada idiomática: wrappers
 **falíveis** (`readText`/`writeText` que dão `fail` em vez de sentinela) e a
 classe **`File`** para leitura/escrita por streaming via fd (`readInto`,
 `writeBytes`, `seek`, `done`) — ideal para arquivos grandes:
@@ -484,12 +484,12 @@ thunk com env vazio. A chamada via variável vira `indirect call` no IR.
 Módulos no estilo TypeScript: `import { ... } from "..."` traz funções de
 outro arquivo `.lex`, e `declare function` (como num `.d.ts`) declara
 símbolos de C sem corpo. Especificador relativo (`"./x"`) resolve ao lado
-do arquivo; nu (`"libc"`, `"socket"`) resolve em [`std/`](std/). Se existir um
+do arquivo; nu (`"libc"`, `"socket"`) resolve em [`src/std/`](std/). Se existir um
 `.c` com o mesmo nome ao lado do módulo, **o lex linka ele automaticamente**.
 
 ```lex
-import { lexListen, lexAccept } from "socket";  // std/socket.lex + socket.c (auto-link)
-import { write, strlen } from "libc";             // std/libc.lex
+import { lexListen, lexAccept } from "socket";  // src/std/socket.lex + socket.c (auto-link)
+import { write, strlen } from "libc";             // src/std/libc.lex
 
 const resp: ptr = "HTTP/1.1 200 OK\r\n\r\nola!";
 write(conn, resp, strlen(resp));
@@ -508,7 +508,7 @@ por conexão, porta ocupada tratada à força pelo compilador:
 curl localhost:8080        # -> ola do lex!
 ```
 
-O [`std/socket.lex`](std/socket.lex) é **lex puro**: a `sockaddr_in` é montada
+O [`src/std/socket.lex`](src/std/socket.lex) é **lex puro**: a `sockaddr_in` é montada
 byte a byte com `alloc`/`poke` (sem `socket.c`), e todo o resto — accept loop,
 threads, erros — também é [lex](examples/exemplo.lex). As syscalls
 (`socket`/`bind`/`listen`/`accept`) entram via `declare function` da libc.
@@ -534,7 +534,7 @@ props e devolve `Component` (HTML). `<Card .../>` é **JSX**: açúcar para a
 chamada `Card({...})` com os atributos virando os campos do struct. Cada
 requisição renderiza numa thread própria, com arena própria (sem GC):
 
-A [`std/http.lex`](std/http.lex) é uma **classe**: você instancia
+A [`src/std/http.lex`](src/std/http.lex) é uma **classe**: você instancia
 `new Server(porta)` e chama `start(handler)`. O `handler` recebe um `Conn`
 (a conexão, com os métodos `recv`/`send`/`respond` compartilhando `this.conn`)
 e devolve o HTML. Cada conexão roda numa thread própria com um `Conn` próprio.
@@ -1014,7 +1014,7 @@ require("lex").setup()                          -- acha o binário no projeto
 - [x] Threads (`spawn`/`join` via pthreads, sem runtime)
 - [x] `async`/`await` (açúcar sobre threads reais: `async fn` → `Future<T>` via spawn, `await` → join; **sem runtime de async**, sem function coloring/event-loop) ([`examples/exemplo.lex`](examples/exemplo.lex))
 - [x] Suíte de testes EM LEX: por módulo (`tests/`) + portão de paridade ponta-a-ponta (`tests/parity.test.lex`) + ponto-fixo do bootstrap
-- [x] Biblioteca de testes **nativa** ([`std/test.lex`](std/test.lex)) + runner `lex test`: arquivos `*.test.lex` SEM `main`, só `describe`/`test`/`it`/`expect(x).toBe(y)` (um `expect` p/ qualquer tipo, com matchers); saída colorida e exit code pra CI ([`examples/tests/`](examples/tests/))
+- [x] Biblioteca de testes **nativa** ([`src/std/test.lex`](src/std/test.lex)) + runner `lex test`: arquivos `*.test.lex` SEM `main`, só `describe`/`test`/`it`/`expect(x).toBe(y)` (um `expect` p/ qualquer tipo, com matchers); saída colorida e exit code pra CI ([`examples/tests/`](examples/tests/))
 - [x] Sintaxe TypeScript-like (`function`/`fn`, `const`, `: tipo`)
 - [x] Loops (`while`)
 - [x] Retorno padrão 0 (`return;` vazio ou nenhum `return` = `return 0`)
@@ -1028,7 +1028,7 @@ require("lex").setup()                          -- acha o binário no projeto
 - [x] `void` e retorno padrão 0 (`return;` / sem return)
 - [x] Servidor HTTP multithread ([`examples/exemplo.lex`](examples/exemplo.lex))
 - [x] Template literals com arena por thread (runtime embutida)
-- [x] `std/http.lex`: servidor como classe (`new Server(porta).start(handler)`, com `Conn`)
+- [x] `src/std/http.lex`: servidor como classe (`new Server(porta).start(handler)`, com `Conn`)
 - [x] Structs (`type Nome = {...}`), acesso a campo, `string`/`Component`
 - [x] Componentes estilo React com **JSX** (`<Card .../>`) ([`examples/exemplo.lex`](examples/exemplo.lex))
 - [x] OOP completa: `class`, `new`, `extends`, vtable (polimorfismo), `super`, `private`, `static` ([`examples/exemplo.lex`](examples/exemplo.lex))
@@ -1067,7 +1067,7 @@ require("lex").setup()                          -- acha o binário no projeto
 - [x] Tipo de retorno de arrow inferido do contexto: `const h: () => f64 = () => 2.5` não precisa mais de `(): f64 =>` — o `Fn` esperado define o tipo de retorno (a assinatura no IR é a mesma, célula i64)
 - [x] `lex check` (validação parser+sema sem codegen, p/ CI) e `lex lsp` (Language Server por stdio com diagnostics ao vivo)
 - [x] Tooling de registry: `lex registry init`/`add` e `lex publish` para criar/manter o índice de pacotes (o índice é um repo git com `packages/<nome>.toml`)
-- [x] **Registry como SITE, escrito em lex** ([`registry-site/`](registry-site/)): um servidor HTTP em lex (dogfooding do próprio `std/http.lex` + fs + JSON) com lista/busca, página de detalhe e API JSON. Com `LEX_REGISTRY_API=<url>`, o `lex add` resolve por `GET /api/pkg/<nome>` e o `lex publish` faz `POST /api/publish` (rede via `curl`, como o `git`; auth opcional por token). Deploy via [`Dockerfile`](registry-site/Dockerfile) — cross-compila o site para um binário estático e roda num `scratch`
+- [x] **Registry como SITE, escrito em lex** ([`registry-site/`](registry-site/)): um servidor HTTP em lex (dogfooding do próprio `src/std/http.lex` + fs + JSON) com lista/busca, página de detalhe e API JSON. Com `LEX_REGISTRY_API=<url>`, o `lex add` resolve por `GET /api/pkg/<nome>` e o `lex publish` faz `POST /api/publish` (rede via `curl`, como o `git`; auth opcional por token). Deploy via [`Dockerfile`](registry-site/Dockerfile) — cross-compila o site para um binário estático e roda num `scratch`
 
 - [x] Posições por **span** nos erros de sema: cada diagnóstico carrega o trecho do fonte (statement/definição) etiquetado por módulo; o `lex check --json` devolve linha/coluna exatas (e o CLI desenha o trecho sublinhado), então o `lex lsp` aponta o ponto certo no editor em vez do painel de Problemas
 - [x] Cliente LSP empacotado na extensão do VS Code (`vscode-languageclient` que sobe o `lex lsp`) + config drop-in para Neovim ([`editors/nvim/lex.lua`](editors/nvim/lex.lua))

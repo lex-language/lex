@@ -17,12 +17,12 @@ Não há passe de otimização: a IR sai direta e o LLVM (via clang) faz o resto
 
 | arquivo | o que faz |
 |---|---|
-| `lexer.lex` | fonte → tokens. Quebras de linha viram `Tok.Newline` (o parser as ignora). Um template `` `…${}…` `` sai como **um** token com o corpo cru — quem o divide é o parser. |
-| `parser.lex` | tokens → AST, por *precedence climbing*. A AST é uma **hierarquia de classes** (`Expr`/`Stmt` + uma subclasse por construção), percorrida com `match` por tipo. Arrows são **içadas** para funções `__lambda_N` de topo. |
-| `sema.lex` | o modelo de objeto e a inferência de tipos. `ClassTable`: por classe, os campos com seu **slot** (herança põe os do pai primeiro, mesmos slots), a vtable (override mantém o índice) e uma **tag** única para o `match` por tipo. `typeOf(expr, scope)` devolve o tipo como *string*. |
-| `typecheck.lex` | as checagens de verdade: aridade, tipo de argumento, campo/método inexistente, `const` reatribuído. **Leniente por princípio** — tipo desconhecido (`"?"`) nunca acusa, porque um falso-positivo quebraria o build do próprio compilador. |
-| `codegen.lex` | AST → LLVM IR **textual**. Sem `phi`: os valores moram em `alloca`/`load`/`store` e o LLVM promove. |
-| `modloader.lex` | segue os `import` (recursivo, dedup), resolve caminhos relativos e módulos `std/`, e funde tudo num `Program` só — é aí que tipos cross-módulo passam a resolver. |
+| `compiler/lexer.lex` | fonte → tokens. Quebras de linha viram `Tok.Newline` (o parser as ignora). Um template `` `…${}…` `` sai como **um** token com o corpo cru — quem o divide é o parser. |
+| `compiler/parser.lex` | tokens → AST, por *precedence climbing*. A AST é uma **hierarquia de classes** (`Expr`/`Stmt` + uma subclasse por construção), percorrida com `match` por tipo. Arrows são **içadas** para funções `__lambda_N` de topo. |
+| `compiler/sema.lex` | o modelo de objeto e a inferência de tipos. `ClassTable`: por classe, os campos com seu **slot** (herança põe os do pai primeiro, mesmos slots), a vtable (override mantém o índice) e uma **tag** única para o `match` por tipo. `typeOf(expr, scope)` devolve o tipo como *string*. |
+| `compiler/typecheck.lex` | as checagens de verdade: aridade, tipo de argumento, campo/método inexistente, `const` reatribuído. **Leniente por princípio** — tipo desconhecido (`"?"`) nunca acusa, porque um falso-positivo quebraria o build do próprio compilador. |
+| `compiler/codegen.lex` | AST → LLVM IR **textual**. Sem `phi`: os valores moram em `alloca`/`load`/`store` e o LLVM promove. |
+| `compiler/modloader.lex` | segue os `import` (recursivo, dedup), resolve caminhos relativos e módulos `std/`, e funde tudo num `Program` só — é aí que tipos cross-módulo passam a resolver. |
 
 ## O modelo de execução
 
@@ -52,7 +52,7 @@ declare ptr @__lex_concat(ptr, ptr)
   %t2 = call ptr @__lex_concat(ptr %t0, ptr %t1)
 ```
 
-São **81 símbolos `__lex_*`**. A tabela `rtAbi` (em `codegen.lex`) guarda a assinatura
+São **81 símbolos `__lex_*`**. A tabela `rtAbi` (em `compiler/codegen.lex`) guarda a assinatura
 C real de cada um — `"<args>|<ret>"`, com `'p'` = ponteiro, `'.'` = i64, `'v'` = void.
 Isso importa porque no nativo `ptr == i64` (e declarar tudo i64 passaria), mas no
 **wasm32 `ptr == i32`**: sem a ABI certa o `wasm-ld` recusa o link. A conversão
@@ -68,12 +68,12 @@ Tudo mora num binário só (`lexcli.lex`), que despacha os subcomandos:
 
 | | |
 |---|---|
-| `fmt.lex` | `lex fmt` — indentação por profundidade de delimitadores |
-| `checker.lex` | `lex check` — sintaxe + indefinidos + tipos, em JSON |
-| `lspserver.lex` | `lex lsp` — Language Server por stdio (chama o checker direto) |
-| `testrunner.lex` | `lex test` — funde `std/test.lex` + a suíte, compila e roda |
-| `pkgcmd.lex`, `pkg.lex`, `toml.lex`, `semver.lex` | `lex pkg` — manifesto e resolução |
-| `json.lex`, `diag.lex` | JSON (usado pelo LSP) e diagnósticos estilo rustc |
+| `tools/fmt.lex` | `lex fmt` — indentação por profundidade de delimitadores |
+| `tools/checker.lex` | `lex check` — sintaxe + indefinidos + tipos, em JSON |
+| `tools/lspserver.lex` | `lex lsp` — Language Server por stdio (chama o checker direto) |
+| `tools/testrunner.lex` | `lex test` — funde `std/test.lex` + a suíte, compila e roda |
+| `tools/pkg*.lex`, `tools/toml.lex`, `tools/semver.lex` | `lex pkg` — manifesto e resolução |
+| `tools/json.lex`, `tools/diag.lex` | JSON (usado pelo LSP) e diagnósticos estilo rustc |
 
 ## Bootstrap
 

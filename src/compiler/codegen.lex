@@ -1350,6 +1350,9 @@ class Codegen {
 
     // new C(args): aloca nslots*8 bytes, grava a tag no slot 0, chama o constructor.
     genNew(ne: NewExpr): string {
+        // classe desconhecida (import não resolvido, typo): `find` indexaria infos[-1]
+        // e segfaultaria o COMPILADOR. O `lex check` já reporta isso como erro.
+        if (this.sema.classes.findInfo(ne.cls) < 0) { return "0"; }
         const ci: ClassInfo = this.sema.classes.find(ne.cls);
         const obj: string = this.rtCall("__lex_alloc", [str(ci.nslots * 8)]);
         const p: string = this.newTmp();

@@ -1,5 +1,5 @@
 // Testes do semver-em-lex (F6.8-B). Rode com:  lex test tests/
-import { semverCmp, semverMatches, semverPickBest } from "../src/semver"
+import { semverCmp, semverMatches, semverPickBest } from "../src/tools/semver"
 
 describe("semver: comparação", () => {
         test("cmp", () => {

@@ -1,11 +1,11 @@
 // checker.lex — núcleo do `lex check` (MÓDULO, só declarações). Detecta erros de
 // SINTAXE (parser acumula com posição) e VARIÁVEL INDEFINIDA, e imprime o array
 // JSON de diagnósticos no formato do `lex check --json` do Rust (line/col 0-based).
-import { lexSrc } from "./lexer"
-import { Parser, Program } from "./parser"
-import { loadProgram } from "./modloader"
-import { checkProgram, Diag } from "./sema"
-import { typeCheck } from "./typecheck"
+import { lexSrc } from "../compiler/lexer"
+import { Parser, Program } from "../compiler/parser"
+import { loadProgram } from "../compiler/modloader"
+import { checkProgram, Diag } from "../compiler/sema"
+import { typeCheck } from "../compiler/typecheck"
 import { jEscape } from "./json"
 
 // offset de byte → objeto JSON {line, col, endLine, endCol, message} (0-based).

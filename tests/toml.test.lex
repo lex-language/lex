@@ -1,5 +1,5 @@
 // Testes do TOML-em-lex (F6.8-A). Rode com:  lex test tests/
-import { parseToml, serializeToml } from "../src/toml"
+import { parseToml, serializeToml } from "../src/tools/toml"
 
 const MANIFEST: string = "[package]\nname = \"myapp\"\nversion = \"0.2.0\"\nmain = \"src/index.lex\"\n\n[dependencies]\ncores = \"^1.2.0\"\nhttp = \"github.com/lex/http\"\n";
 
