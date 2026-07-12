@@ -5,6 +5,7 @@ import { lexSrc } from "./lexer"
 import { Parser, Program } from "./parser"
 import { loadProgram } from "./modloader"
 import { checkProgram, Diag } from "./sema"
+import { typeCheck } from "./typecheck"
 import { jEscape } from "./json"
 
 // offset de byte → objeto JSON {line, col, endLine, endCol, message} (0-based).
@@ -44,7 +45,8 @@ fn runCheck(path: string): i64 {
     }
 
     const prog: Program = loadProgram(path);
-    const diags: Diag[] = checkProgram(prog);
+    let diags: Diag[] = checkProgram(prog);        // variável indefinida
+    for (const d of typeCheck(prog)) { diags.push(d); }   // tipos/aridade/campo/const
     let out: string = "[";
     let first: bool = true;
     for (const d of diags) {

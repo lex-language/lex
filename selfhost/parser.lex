@@ -58,7 +58,8 @@ class Binary extends Expr {
 class Call extends Expr {
     name: string
     args: Expr[]
-    constructor(name: string, xs: Expr[]) { this.name = name; this.args = xs }
+    pos: i64           // offset do identificador (p/ diagnósticos)
+    constructor(name: string, xs: Expr[]) { this.name = name; this.args = xs; this.pos = 0 }
 }
 class ArrayLit extends Expr {
     items: Expr[]
@@ -67,14 +68,16 @@ class ArrayLit extends Expr {
 class Field extends Expr {
     base: Expr
     field: string
-    constructor(base: Expr, field: string) { this.base = base; this.field = field }
+    pos: i64
+    constructor(base: Expr, field: string) { this.base = base; this.field = field; this.pos = 0 }
 }
 class MethodCall extends Expr {
     base: Expr
     method: string
     args: Expr[]
+    pos: i64
     constructor(base: Expr, method: string, xs: Expr[]) {
-        this.base = base; this.method = method; this.args = xs
+        this.base = base; this.method = method; this.args = xs; this.pos = 0
     }
 }
 class Index extends Expr {
@@ -85,7 +88,8 @@ class Index extends Expr {
 class NewExpr extends Expr {
     cls: string
     args: Expr[]
-    constructor(cls: string, args: Expr[]) { this.cls = cls; this.args = args }
+    pos: i64
+    constructor(cls: string, args: Expr[]) { this.cls = cls; this.args = args; this.pos = 0 }
 }
 class MapLit extends Expr {
     mapKeys: string[]   // chaves string (paralelo a vals); vazio = `{}`
@@ -160,8 +164,10 @@ class LetStmt extends Stmt {
     ty: string         // "" = sem anotação
     mutable: bool      // true = let, false = const
     value: Expr
+    pos: i64           // offset do nome (p/ diagnósticos)
     constructor(name: string, ty: string, mutable: bool, value: Expr) {
         this.name = name; this.ty = ty; this.mutable = mutable; this.value = value
+        this.pos = 0
     }
 }
 class AssignStmt extends Stmt {
@@ -434,9 +440,13 @@ class Parser {
                 this.advance();
                 const id: Token = this.advance();          // identificador após '.'
                 if (this.peekKind() == Tok.LParen) {
-                    e = new MethodCall(e, id.text, this.parseArgs());
+                    const mc: MethodCall = new MethodCall(e, id.text, this.parseArgs());
+                    mc.pos = id.pos;
+                    e = mc;
                 } else {
-                    e = new Field(e, id.text);
+                    const fd: Field = new Field(e, id.text);
+                    fd.pos = id.pos;
+                    e = fd;
                 }
             } else if (k == Tok.LBracket) {
                 this.advance();
@@ -496,9 +506,11 @@ class Parser {
             return new ArrayLit(items);
         }
         if (k == Tok.New) {
-            const cname: string = this.advance().text;
+            const ctok: Token = this.advance();
             this.skipTypeArgs();
-            return new NewExpr(cname, this.parseArgs());
+            const ne: NewExpr = new NewExpr(ctok.text, this.parseArgs());
+            ne.pos = ctok.pos;
+            return ne;
         }
         if (k == Tok.Match) { return this.parseMatch(); }
         if (k == Tok.Template) { return this.parseTemplate(t.text); }
@@ -509,7 +521,9 @@ class Parser {
         }
         if (k == Tok.Ident) {
             if (this.peekKind() == Tok.LParen) {
-                return new Call(t.text, this.parseArgs());
+                const cl: Call = new Call(t.text, this.parseArgs());
+                cl.pos = t.pos;
+                return cl;
             }
             return new Var(t.text, t.pos);
         }
@@ -794,7 +808,8 @@ class Parser {
     parseLet(): Stmt {
         const mutable: bool = (this.peekKind() == Tok.Let);
         this.advance();                              // const/let
-        const name: string = this.advance().text;    // ident
+        const nameTok: Token = this.advance();       // ident
+        const name: string = nameTok.text;
         let ty: string = "";
         if (this.peekKind() == Tok.Colon) {
             this.advance();
@@ -803,7 +818,9 @@ class Parser {
         this.expect(Tok.Eq);
         const value: Expr = this.parseExpr();
         this.eatSemi();
-        return new LetStmt(name, ty, mutable, value);
+        const ls: LetStmt = new LetStmt(name, ty, mutable, value);
+        ls.pos = nameTok.pos;
+        return ls;
     }
 
     parseReturn(): Stmt {
@@ -1023,11 +1040,37 @@ class Parser {
             this.advance();
         }
     }
+    // consome `( ... )` balanceado a partir do `(` atual.
+    skipBalancedParens() {
+        this.advance();                              // (
+        let depth: i64 = 1;
+        while (depth > 0 && this.peekKind() != Tok.Eof) {
+            const k: Tok = this.peekKind();
+            if (k == Tok.LParen) { depth = depth + 1; }
+            else if (k == Tok.RParen) { depth = depth - 1; }
+            this.advance();
+        }
+    }
     // pula uma declaração não modelada no codegen (interface/type/declare): são
-    // erasure (contratos/aliases checados só pelo Rust). Consome até o corpo
-    // `{...}` balanceado, ou até `;`/próximo top-level se não houver corpo.
+    // erasure (contratos/aliases/símbolos externos). Consome até o corpo `{...}`
+    // balanceado, ou até `;`/próximo top-level se não houver corpo.
     skipModuleDecl() {
+        const k0: Tok = this.peekKind();
         this.advance();                              // interface / type / declare
+        // `declare function f(params): T;` — ASSINATURA, sem corpo. Precisa de
+        // tratamento próprio: o `function` logo em seguida faria o laço abaixo
+        // parar e a assinatura seria parseada como uma função sem corpo (era o
+        // que quebrava o std/libc.lex).
+        if (k0 == Tok.Declare && this.peekKind() == Tok.Function) {
+            this.advance();                          // function
+            this.advance();                          // nome
+            this.skipTypeArgs();
+            if (this.peekKind() == Tok.LParen) { this.skipBalancedParens(); }
+            if (this.peekKind() == Tok.Colon) { this.advance(); this.parseTypeStr(); }
+            if (this.peekKind() == Tok.Bang) { this.advance(); }
+            this.eatSemi();
+            return;
+        }
         while (true) {
             const k: Tok = this.peekKind();
             if (k == Tok.Eof) { return; }

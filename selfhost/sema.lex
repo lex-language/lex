@@ -440,6 +440,30 @@ class Sema {
         return "?";
     }
 
+    // índice de uma função de topo, ou -1 (p/ o type-checker distinguir função do
+    // usuário de builtin/variável-função).
+    funcIndex(name: string): i64 {
+        let i: i64 = 0;
+        while (i < this.funcs.len()) {
+            if (strEq(this.funcs[i].name, name)) { return i; }
+            i = i + 1;
+        }
+        return -1;
+    }
+    // parâmetros (com nome+tipo) de um método/constructor — o type-checker precisa
+    // da ARIDADE, que só os tipos não dão quando a lista é vazia por não achar.
+    methodParams(cls: string, method: string): Param[] {
+        let empty: Param[] = [];
+        if (this.classes.findInfo(cls) < 0) { return empty; }
+        const owner: string = this.classes.methodOwner(cls, method);
+        const di: i64 = this.classes.indexOfDecl(owner);
+        if (di < 0) { return empty; }
+        const decl: ClassDecl = this.classes.decls[di];
+        for (const f of decl.methods) {
+            if (strEq(f.name, method)) { return f.params; }
+        }
+        return empty;
+    }
     // tipos dos parâmetros de uma função de topo (vazio se não achar).
     funcParamTypes(name: string): string[] {
         for (const f of this.funcs) {
@@ -503,10 +527,20 @@ class Sema {
             TryExpr t => this.typeOf(t.call, scope),    // try f() tem o tipo de f()
             CatchExpr c => this.typeOf(c.lhs, scope),   // x catch y tem o tipo de x
             SpawnExpr s => "i64",                       // handle de thread (Future)
-            AwaitExpr a => "i64",                       // resultado da thread
+            AwaitExpr a => this.typeAwait(a, scope),    // await Future<T> → T
             StructLit sl => "any",                      // literal json
             _ => "?"
         };
+    }
+
+    // await de um Future<T> devolve T; de qualquer outra coisa, i64 (o handle cru).
+    typeAwait(a: AwaitExpr, scope: Scope): string {
+        const t: string = this.typeOf(a.inner, scope);
+        if (strEq(baseName(t), "Future")) {
+            const ts: string[] = typeArgsOf(t);
+            if (ts.len() > 0) { return ts[0]; }
+        }
+        return "i64";
     }
 
     typeUnary(u: Unary, scope: Scope): string {
@@ -545,6 +579,11 @@ class Sema {
         }
         const bi: string = builtinFnRet(c.name);
         if (!strEq(bi, "")) { return bi; }
+        // chamar uma função `async` LANÇA uma thread e devolve o handle: Future<T>
+        const fi: i64 = this.funcIndex(c.name);
+        if (fi >= 0 && this.funcs[fi].isAsync) {
+            return concat("Future<", concat(this.funcs[fi].ret, ">"));
+        }
         return this.funcRet(c.name);
     }
 

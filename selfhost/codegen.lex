@@ -459,6 +459,9 @@ class Codegen {
     }
 
     genBinary(b: Binary): string {
+        // `&&`/`||` ANTES de gerar os operandos: o rhs só pode ser avaliado
+        // condicionalmente (curto-circuito).
+        if (b.op == Tok.AmpAmp || b.op == Tok.PipePipe) { return this.genAndOr(b); }
         // aritmética/comparação f64: se qualquer operando é f64, vai pro caminho float.
         const lt: string = this.sema.typeOf(b.lhs, this.scope);
         const rt: string = this.sema.typeOf(b.rhs, this.scope);
@@ -483,10 +486,38 @@ class Codegen {
         if (op == Tok.Caret) { return this.bin("xor", l, r); }
         if (op == Tok.Shl) { return this.bin("shl", l, r); }
         if (op == Tok.Shr) { return this.bin("ashr", l, r); }   // shift aritmético (sinal)
-        // lógicos (sem curto-circuito por ora: normaliza p/ 0/1 e and/or — TODO)
-        if (op == Tok.AmpAmp) { return this.bin("and", this.truth(l), this.truth(r)); }
-        if (op == Tok.PipePipe) { return this.bin("or", this.truth(l), this.truth(r)); }
         return "0";
+    }
+
+    // `a && b` / `a || b` com CURTO-CIRCUITO: `b` só é avaliado se necessário.
+    // Sem isso, um guarda como `i >= 0 && xs[i].campo` avalia xs[-1] e quebra —
+    // era o comportamento antigo (and/or puros) e divergia do compilador Rust.
+    genAndOr(b: Binary): string {
+        const id: i64 = this.matchN;
+        this.matchN = this.matchN + 1;
+        const ra: string = `%sc${id}.addr`;
+        this.emit(`  ${ra} = alloca i64`);
+        const lv: string = this.truth(this.genExpr(b.lhs));
+        this.emit(`  store i64 ${lv}, ptr ${ra}`);      // resultado provisório = lhs
+        const cb: string = this.newTmp();
+        this.emit(`  ${cb} = icmp ne i64 ${lv}, 0`);
+        const lrhs: string = this.newLabel();
+        const lend: string = this.newLabel();
+        if (b.op == Tok.AmpAmp) {                       // && : só avalia rhs se lhs=1
+            this.emit(`  br i1 ${cb}, label %${lrhs}, label %${lend}`);
+        } else {                                        // || : só avalia rhs se lhs=0
+            this.emit(`  br i1 ${cb}, label %${lend}, label %${lrhs}`);
+        }
+        this.term = true;
+        this.label(lrhs);
+        const rv: string = this.truth(this.genExpr(b.rhs));
+        this.emit(`  store i64 ${rv}, ptr ${ra}`);
+        this.emit(`  br label %${lend}`);
+        this.term = true;
+        this.label(lend);
+        const res: string = this.newTmp();
+        this.emit(`  ${res} = load i64, ptr ${ra}`);
+        return res;
     }
 
     // operando f64: f64 trafega como bits-do-double num i64 → bitcast p/ double;
