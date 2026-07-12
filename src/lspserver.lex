@@ -1,7 +1,8 @@
 // lspserver.lex — núcleo do Language Server (MÓDULO, só declarações). Espelha
 // src/lsp.rs: JSON-RPC por stdio (initialize/didOpen/didChange/shutdown/exit) e
-// diagnósticos via `lexcheck`. O driver é lexlsp.lex (ou `lex lsp` no lexcli).
+// diagnósticos via o checker (chamado direto). Exposto como `lex lsp`.
 import { jParse, jGet, jStr, jNum, jArr, jPath, jEscape, Json, JNum, JStr } from "./json"
+import { checkJson } from "./checker"
 
 // ── leitura de mensagens (Content-Length + corpo) ────────────────────────────
 fn endsCRLF2(s: string): bool {
@@ -96,13 +97,15 @@ fn diagsToLsp(arr: Json): string {
     }
     return s;
 }
-// roda o `lexcheck` (self-hostado) no texto e publica os diagnósticos sob uri.
+// checa o texto e publica os diagnósticos sob `uri`.
+//
+// Chama o checker DIRETO (`checkJson`), sem subprocesso: o LSP já roda dentro do
+// binário do lex. Antes ele fazia `system("lexcheck ...")` — um binário separado
+// que precisava estar no PATH e que nem existe mais.
 fn analyzeAndPublish(uri: string, text: string) {
     const tmp: string = "/tmp/lex_lsp_doc.lex";
-    const outf: string = "/tmp/lex_lsp_out.json";
     writeFile(tmp, text);
-    system(`lexcheck ${tmp} > ${outf} 2>/dev/null`);
-    const arr: Json = jParse(lspTrim(readFile(outf)));
+    const arr: Json = jParse(checkJson(tmp));
     const diags: string = diagsToLsp(arr);
     lspSend(`{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"${jEscape(uri)}","diagnostics":[${diags}]}}`);
 }

@@ -1,7 +1,7 @@
 // pkg.lex — núcleo do gerenciador de pacotes em lex (Fase F6.8-C). Espelha a
 // lógica de parsing/manifesto de src/pkg.rs. As partes PURAS (parse de spec,
 // normalização de URL, mutação do lex.toml) vivem aqui e são testáveis sem rede;
-// o fetch via git/curl fica no driver (lexpkg.lex), ainda parcial.
+// o fetch via git/curl fica no `lex pkg`, ainda parcial.
 import { TomlDoc, TomlSection, parseToml, serializeToml } from "./toml"
 
 // uma dependência resolvida da forma textual: kind = "file"|"git"|"registry".

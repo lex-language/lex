@@ -1146,7 +1146,7 @@ class Parser {
         return new Program(imports, enums, classes, funcs, main);
     }
 
-    // Compat: o codegen/interp do subset só querem as funções de topo.
+    // Compat: quem só quer as funções de topo.
     parseProgram(): Func[] {
         return this.parseModule().funcs;
     }

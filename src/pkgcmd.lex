@@ -1,6 +1,6 @@
 // pkgcmd.lex — despacho dos comandos de pacote (MÓDULO, só declarações).
 // `runPkg(av, base)`: av[base] é o subcomando (init/add/remove/list). O driver é
-// lexpkg.lex (base=1) ou `lex pkg ...` no lexcli (base=2). Só manifesto (sem rede).
+// Chamado por `lex pkg ...` (base=2). Só manifesto (sem rede).
 import { newManifest, addDep, removeDep, parseDep, DepSpec } from "./pkg"
 import { parseToml, serializeToml, TomlDoc, TomlSection } from "./toml"
 import { semverPickBest } from "./semver"

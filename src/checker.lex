@@ -24,10 +24,13 @@ fn posJson(src: string, pos: i64, span: i64, msg: string): string {
 }
 fn diagJson(src: string, d: Diag): string { return posJson(src, d.pos, d.span, d.msg); }
 
-// checa `path`, imprime o JSON e devolve 1 se houver diagnóstico (0 = limpo).
-// Sintaxe primeiro (parse do arquivo); se limpo, variável indefinida (programa
-// mesclado, p/ resolver os imports e não acusar nomes de outros módulos).
-fn runCheck(path: string): i64 {
+// checa `path` e DEVOLVE o array JSON de diagnósticos (não imprime).
+// O LSP precisa da string: ele fala JSON-RPC pelo stdout, então qualquer print
+// solto corromperia o protocolo.
+//
+// Sintaxe primeiro (parse do arquivo); se limpo, variável indefinida + tipos (no
+// programa MESCLADO, p/ resolver os imports e não acusar nomes de outros módulos).
+fn checkJson(path: string): string {
     const src: string = readFile(path);
     const p: Parser = new Parser(lexSrc(src));
     p.parseModule();
@@ -40,12 +43,11 @@ fn runCheck(path: string): i64 {
             out = concat(out, posJson(src, p.errPos[i], 1, concat("syntax error: ", p.errs[i])));
             i = i + 1;
         }
-        Terminal.log(concat(out, "]"));
-        return 1;
+        return concat(out, "]");
     }
 
     const prog: Program = loadProgram(path);
-    let diags: Diag[] = checkProgram(prog);        // variável indefinida
+    let diags: Diag[] = checkProgram(prog);               // variável indefinida
     for (const d of typeCheck(prog)) { diags.push(d); }   // tipos/aridade/campo/const
     let out: string = "[";
     let first: bool = true;
@@ -54,7 +56,13 @@ fn runCheck(path: string): i64 {
         out = concat(out, diagJson(src, d));
         first = false;
     }
-    Terminal.log(concat(out, "]"));
-    if (diags.len() > 0) { return 1; }
-    return 0;
+    return concat(out, "]");
+}
+
+// `lex check`: imprime o JSON e devolve 1 se houver diagnóstico (0 = limpo).
+fn runCheck(path: string): i64 {
+    const js: string = checkJson(path);
+    Terminal.log(js);
+    if (strEq(js, "[]")) { return 0; }
+    return 1;
 }
