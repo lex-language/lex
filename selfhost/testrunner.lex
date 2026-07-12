@@ -18,5 +18,14 @@ fn runTestFile(entry: string): i64 {
     writeFile(ll, compileProgramToIR(prog));
     const rc: i64 = system(`clang -Wno-override-module -o ${bin} ${ll} ${findRuntime()} -lpthread`);
     if (rc != 0) { return -1; }
-    return system(bin) / 256;         // WEXITSTATUS (placar do harness)
+    // `system` devolve o WAIT STATUS, não o exit code. Morte por SINAL fica nos 7
+    // bits baixos — e como `status / 256` dava 0 pra um SIGSEGV(11), um binário de
+    // teste que CRASHAVA era reportado como sucesso. Detectamos o sinal primeiro.
+    const st: i64 = system(bin);
+    const sig: i64 = st & 127;
+    if (sig != 0) {
+        Terminal.log(`erro: o binário de teste morreu com o sinal ${sig}`);
+        return 1;
+    }
+    return st / 256;                  // WEXITSTATUS (placar do harness)
 }

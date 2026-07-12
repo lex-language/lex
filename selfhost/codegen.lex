@@ -166,6 +166,8 @@ fn rtAbi(sym: string): string {
     if (strEq(sym, "__lex_json_bool")) { return ".|p"; }
     if (strEq(sym, "__lex_json_str")) { return "p|p"; }
     if (strEq(sym, "__lex_json_object")) { return "|p"; }
+    if (strEq(sym, "__lex_json_array")) { return "|p"; }
+    if (strEq(sym, "__lex_json_push")) { return "pp|v"; }
     if (strEq(sym, "__lex_json_set")) { return "ppp|v"; }
     if (strEq(sym, "__lex_json_eq")) { return "pp|."; }
     if (strEq(sym, "__lex_json_as_int")) { return "p|."; }
@@ -213,7 +215,8 @@ fn rtSymbols(): string[] {
         "__lex_poke8", "__lex_poke16", "__lex_poke32", "__lex_poke64",
         "__lex_peek8", "__lex_peek16", "__lex_peek32", "__lex_peek64",
         "__lex_json_num", "__lex_json_float", "__lex_json_bool", "__lex_json_str",
-        "__lex_json_object", "__lex_json_set", "__lex_json_eq", "__lex_json_as_int",
+        "__lex_json_object", "__lex_json_array", "__lex_json_push",
+        "__lex_json_set", "__lex_json_eq", "__lex_json_as_int",
         "__lex_json_as_float", "__lex_json_as_str", "__lex_json_stringify",
         "__lex_fs_read", "__lex_fs_write", "__lex_fs_exists", "__lex_read_stdin",
         "__lex_system", "__lex_args",
@@ -708,9 +711,29 @@ class Codegen {
         return this.rtCall(rfn, [bv, a]);
     }
 
+    // se `a` é um ARRAY LITERAL, constrói o json array correspondente; senão "".
+    boxArrayLit(a: Expr): string {
+        return match (a) { ArrayLit al => this.genJsonArray(al), _ => "" };
+    }
+    genJsonArray(al: ArrayLit): string {
+        const arr: string = this.rtCall("__lex_json_array", []);
+        for (const it of al.items) {
+            this.rtCall("__lex_json_push", [arr, this.boxArg(it, "any")]);
+        }
+        return arr;
+    }
+
     // gera um arg; se o parâmetro é `any` e o valor é concreto, BOX num LexJson
     // do runtime (tag+payload) — assim `jsonEq` compara por valor (int/str/float).
     boxArg(a: Expr, paramTy: string): string {
+        // `[a, b, c]` num parâmetro `any`: vira um ARRAY JSON de verdade (cada item
+        // boxado). Antes passávamos o ponteiro cru do LexArr — e o __lex_json_eq
+        // lia aquilo como se fosse um LexJson (tag de string) e caía num strcmp em
+        // lixo → SEGV. Espelha o gen_box_value do Rust.
+        if (strEq(paramTy, "any")) {
+            const boxed: string = this.boxArrayLit(a);
+            if (!strEq(boxed, "")) { return boxed; }
+        }
         const v: string = this.genExpr(a);
         if (!strEq(paramTy, "any")) { return v; }
         const at: string = this.sema.typeOf(a, this.scope);
@@ -719,7 +742,11 @@ class Codegen {
         if (strEq(at, "f64")) { return this.rtCall("__lex_json_float", [v]); }
         if (strEq(at, "bool")) { return this.rtCall("__lex_json_bool", [v]); }
         if (strEq(at, "i64")) { return this.rtCall("__lex_json_num", [v]); }
-        return v;                                                            // classe/array/map: best-effort sem box
+        // FALLBACK: tipo desconhecido/classe/array-não-literal. NUNCA devolver o
+        // valor cru — o consumidor de `any` o trata como LexJson* e faria deref de
+        // um inteiro (SEGV). Empacota como número, igual ao `_ => json_num` do Rust:
+        // a comparação vira por valor/ponteiro, mas não quebra.
+        return this.rtCall("__lex_json_num", [v]);
     }
     // lista de args com boxing por tipo de parâmetro (ptypes[i]); "" = sem box.
     argListBoxed(args: Expr[], ptypes: string[]): string {

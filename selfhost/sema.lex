@@ -156,26 +156,37 @@ class ClassTable {
     find(name: string): ClassInfo { return this.infos[this.findInfo(name)]; }
 
     // slot de um campo (resolve herança), ou -1.
+    // Os lookups abaixo CHECAM findInfo antes de indexar `infos`: com uma classe
+    // desconhecida (ex.: `Counter.count`, cuja base tipa "?"), `infos[-1]` lia fora
+    // do array e segfaultava o compilador.
     fieldSlot(cls: string, field: string): i64 {
-        const ci: ClassInfo = this.find(cls);
+        const i: i64 = this.findInfo(cls);
+        if (i < 0) { return -1; }
+        const ci: ClassInfo = this.infos[i];
         for (const f of ci.fields) { if (strEq(f.name, field)) { return f.slot; } }
         return -1;
     }
     // índice de vtable de um método, ou -1.
     methodIndex(cls: string, method: string): i64 {
-        const ci: ClassInfo = this.find(cls);
+        const i: i64 = this.findInfo(cls);
+        if (i < 0) { return -1; }
+        const ci: ClassInfo = this.infos[i];
         for (const m of ci.methods) { if (strEq(m.name, method)) { return m.vindex; } }
         return -1;
     }
     // tipo declarado de um campo (resolve herança), ou "?".
     fieldType(cls: string, field: string): string {
-        const ci: ClassInfo = this.find(cls);
+        const i: i64 = this.findInfo(cls);
+        if (i < 0) { return "?"; }
+        const ci: ClassInfo = this.infos[i];
         for (const f of ci.fields) { if (strEq(f.name, field)) { return f.ty; } }
         return "?";
     }
     // classe que define/sobrescreve um método (dono do slot de vtable), ou "".
     methodOwner(cls: string, method: string): string {
-        const ci: ClassInfo = this.find(cls);
+        const i: i64 = this.findInfo(cls);
+        if (i < 0) { return ""; }
+        const ci: ClassInfo = this.infos[i];
         for (const m of ci.methods) { if (strEq(m.name, method)) { return m.owner; } }
         return "";
     }
@@ -372,6 +383,14 @@ fn builtinFnRet(name: string): string {
     if (strEq(name, "parseInt")) { return "i64"; }
     if (strEq(name, "parseFloat")) { return "f64"; }
     if (strEq(name, "jsonAsFloat")) { return "f64"; }   // extrator de any → f64
+    if (strEq(name, "jsonAsInt")) { return "i64"; }
+    if (strEq(name, "jsonAsStr")) { return "string"; }
+    if (strEq(name, "jsonStringify")) { return "string"; }
+    // CONSTRUTORES de json já devolvem `any` — tipá-los evita que o boxArg os
+    // empacote DE NOVO (o ponteiro viraria um número).
+    if (strEq(name, "jsonNum") || strEq(name, "jsonStr") || strEq(name, "jsonBool")
+        || strEq(name, "jsonFloat") || strEq(name, "jsonObject")
+        || strEq(name, "jsonArray")) { return "any"; }
     if (strEq(name, "fabs")) { return "f64"; }
     if (strEq(name, "sqrt") || strEq(name, "pow") || strEq(name, "floor")
         || strEq(name, "ceil") || strEq(name, "round") || strEq(name, "sin")
@@ -622,6 +641,8 @@ class Sema {
         if (strEq(m.method, "push")) { return "void"; }
         if (strEq(m.method, "pop")) { return elementTy(bt); }
         if (strEq(m.method, "charAt") || strEq(m.method, "substring")) { return "string"; }
+        if (strEq(m.method, "contains") || strEq(m.method, "startsWith")
+            || strEq(m.method, "endsWith")) { return "i64"; }   // 0/1
         if (strEq(m.method, "join")) { return "string"; }   // string[].join(sep) → string
         if (strEq(m.method, "jsonStringify")) { return "string"; }
         if (strEq(m.method, "jsonSet") || strEq(m.method, "mapSet")) { return "void"; }
