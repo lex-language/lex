@@ -1,7 +1,7 @@
 // Testes do parser-em-lex (Fase 2). Rode com:  lex test tests/
 // Cada caso parseia uma expressão e confere a AST renderizada como S-expression
 // (string → comparação robusta, sem depender de boxing de array em `any`).
-import { parseExprStr, parseStmtStr, parseFuncStr, parseModuleStr } from "../src/compiler/parser"
+import { parseExprStr, parseStmtStr, parseFuncStr, parseModuleStr } from "../compiler/parser"
 
 describe("parser de expressões", () => {
         test("precedência aritmética", () => {

@@ -1,5 +1,5 @@
 // Testes do lexer-em-lex (Fase 1). Rode com:  lex test tests/
-import { lexSrc, Token, Tok } from "../src/compiler/lexer"
+import { lexSrc, Token, Tok } from "../compiler/lexer"
 
 // Compara a sequência de tipos de token elemento a elemento. (Comparar o array
 // inteiro de uma vez não dá: o expect só estrutura arrays LITERAIS; um array

@@ -5,10 +5,10 @@
 #
 # Usa o `bin/lex` que já existe (ou constrói um da semente antiga primeiro).
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 LEX="${LEX:-./bin/lex}"
-[ -x "$LEX" ] || { echo "erro: $LEX não existe — rode ./scripts/build-seed.sh antes"; exit 1; }
+[ -x "$LEX" ] || { echo "erro: $LEX não existe — rode ./src/scripts/build-seed.sh antes"; exit 1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

@@ -29,14 +29,14 @@ que é o LLVM IR do próprio compilador-em-lex, no ponto-fixo. O clang a transfo
 num `bin/lex`, e a partir daí o `lex` recompila a si mesmo **a partir do fonte**:
 
 ```sh
-./scripts/build-seed.sh     # -> bin/lex  (só precisa de clang)
+./src/scripts/build-seed.sh     # -> bin/lex  (só precisa de clang)
 ```
 
 O script termina validando o ponto-fixo. Se você mudar `src/*.lex`, regere a
 semente antes de commitar:
 
 ```sh
-./scripts/regen-seed.sh
+./src/scripts/regen-seed.sh
 ```
 
 > A IR da semente é **agnóstica de alvo** (usa `ptr` opaco e células i64), então o
@@ -45,22 +45,22 @@ semente antes de commitar:
 ## Uso
 
 ```sh
-./scripts/build-seed.sh         # constrói bin/lex a partir da semente
+./src/scripts/build-seed.sh         # constrói bin/lex a partir da semente
 
 ./bin/lex version
 
 # compila para um binário nativo
-./bin/lex examples/exemplo.lex -o exemplo
+./bin/lex src/examples/exemplo.lex -o exemplo
 ./exemplo; echo $?      # roda o tour e sai com 0
 
 # mostra o LLVM IR gerado (ótimo para aprender)
-./bin/lex examples/exemplo.lex --emit-ir
+./bin/lex src/examples/exemplo.lex --emit-ir
 
 # compila e executa em um comando só
-./bin/lex examples/exemplo.lex --run
+./bin/lex src/examples/exemplo.lex --run
 
 # compila para WebAssembly (.wasm) e roda no runtime embutido (sem Node)
-./bin/lex examples/exemplo.lex --target wasm -o exemplo.wasm --run
+./bin/lex src/examples/exemplo.lex --target wasm -o exemplo.wasm --run
 ./bin/lex exemplo.wasm          # ou roda um .wasm já compilado
 #   no browser, abra web/index.html e escolha o .wasm (veja web/README.md)
 
@@ -68,15 +68,15 @@ semente antes de commitar:
 #   macOS:   clang + SDK do sistema
 #   Linux:   runtime FREESTANDING (syscalls cruas) + ld.lld → binário estático
 #   Windows: runtime FREESTANDING (Win32 API) + lld-link (import libs via llvm-lib)
-./bin/lex examples/exemplo.lex --target linux-x64   -o exemplo-linux
-./bin/lex examples/exemplo.lex --target windows-x64 -o exemplo.exe
-./bin/lex examples/exemplo.lex --target macos-x64   -o exemplo-x64
+./bin/lex src/examples/exemplo.lex --target linux-x64   -o exemplo-linux
+./bin/lex src/examples/exemplo.lex --target windows-x64 -o exemplo.exe
+./bin/lex src/examples/exemplo.lex --target macos-x64   -o exemplo-x64
 #   alvos: linux-x64, linux-arm64, windows-x64, windows-arm64, macos-x64, macos-arm64
 
 # modo watcher: recompila a cada alteração nos fontes (.lex/.c);
 # com --run, também re-executa o binário (mata o processo anterior —
 # perfeito para os servidores HTTP)
-./bin/lex examples/exemplo.lex --watch --run
+./bin/lex src/examples/exemplo.lex --watch --run
 ```
 
 **Multiplataforma.** O mesmo código lex roda em três frentes:
@@ -231,7 +231,7 @@ Terminal.log(dobro(21));        // 42
 - vale só no arquivo de **entrada**. Um módulo importado só exporta declarações
   (não há ordem de inicialização para rodar código de topo).
 
-Veja [`examples/exemplo.lex`](examples/exemplo.lex).
+Veja [`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### Erros: interpretação forçada pelo compilador
 
@@ -270,7 +270,7 @@ Duas regras extras de honestidade:
 
 - **`main` pode ser falível** (`function main(): i32!`): um erro que escapar
   imprime `erro: N` no stderr e o processo sai com código 1 — padrão
-  Rust/Zig ([`examples/exemplo.lex`](examples/exemplo.lex)).
+  Rust/Zig ([`src/examples/exemplo.lex`](src/examples/exemplo.lex)).
 - **`f() catch v;` solto não compila**: o valor seria descartado, ou seja, o
   erro seria silenciado fingindo tratamento. Guarde o resultado ou use `try`.
 
@@ -350,7 +350,7 @@ fila FIFO com `pthread_mutex`+`cond`, alocada no **heap** (não na arena): o can
 é compartilhado e sobrevive ao fim da thread que o criou. Ele carrega valores
 `i64` (números/handles) — strings montadas na arena de uma thread não atravessam
 com segurança, porque aquela arena some quando a thread termina. Exemplo:
-[`examples/exemplo.lex`](examples/exemplo.lex).
+[`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### `async` / `await`: a mesma sintaxe do JS, mas com threads reais
 
@@ -377,7 +377,7 @@ Regras (herdadas do `spawn`): uma `async fn` **não pode ser falível** (um erro
 outra thread não teria quem o tratasse) nem variádica; os argumentos são copiados
 para a thread. No `--target wasm` (single-thread) o `await` roda **síncrono** e o
 resultado trafega em 32 bits (use o alvo nativo para `f64`/`i64` grande entre
-threads). Exemplo: [`examples/exemplo.lex`](examples/exemplo.lex).
+threads). Exemplo: [`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### `defer` e memória dinâmica (estilo Zig)
 
@@ -402,7 +402,7 @@ uma flag) — valem em todo caminho de saída: `return`, `fail`, `try` que propa
 ou cair no fim. `poke8/16/32/64` e `peek8/16/32/64` leem/escrevem em offsets de
 bytes; as variantes `poke16be`/`poke32be` gravam em ordem de rede — é exatamente
 o que [`src/std/socket.lex`](src/std/socket.lex) usa para montar a `sockaddr_in` em lex
-puro. Exemplo: [`examples/exemplo.lex`](examples/exemplo.lex).
+puro. Exemplo: [`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### Filesystem
 
@@ -439,7 +439,7 @@ const n: i64 = f.readInto(buf, 63);
 f.done();
 ```
 
-Exemplo completo: [`examples/exemplo.lex`](examples/exemplo.lex).
+Exemplo completo: [`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### Funções como valor e arrow functions
 
@@ -477,7 +477,7 @@ Por baixo: a arrow é içada para uma função de topo (`__lambda_N`) que recebe
 (`[fn_ptr, capturas...]`). Uma função nomeada usada como valor é embrulhada num
 thunk com env vazio. A chamada via variável vira `indirect call` no IR.
 `this` também pode ser capturado dentro de um método. Exemplo completo:
-[`examples/exemplo.lex`](examples/exemplo.lex).
+[`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### Imports, FFI, strings e o servidor HTTP
 
@@ -503,14 +503,14 @@ Com isso, o lex roda um **servidor HTTP multithread de verdade** — uma thread
 por conexão, porta ocupada tratada à força pelo compilador:
 
 ```sh
-./bin/lex examples/exemplo.lex -o servidor
+./bin/lex src/examples/exemplo.lex -o servidor
 ./servidor &
 curl localhost:8080        # -> ola do lex!
 ```
 
 O [`src/std/socket.lex`](src/std/socket.lex) é **lex puro**: a `sockaddr_in` é montada
 byte a byte com `alloc`/`poke` (sem `socket.c`), e todo o resto — accept loop,
-threads, erros — também é [lex](examples/exemplo.lex). As syscalls
+threads, erros — também é [lex](src/examples/exemplo.lex). As syscalls
 (`socket`/`bind`/`listen`/`accept`) entram via `declare function` da libc.
 
 ### Template literals e componentes server-side
@@ -570,7 +570,7 @@ function main(): i32! {
 ```
 
 ```sh
-./bin/lex examples/exemplo.lex -o site
+./bin/lex src/examples/exemplo.lex -o site
 ./site &
 curl localhost:8080      # HTML composto pelos componentes, props interpoladas
 ```
@@ -579,7 +579,7 @@ curl localhost:8080      # HTML composto pelos componentes, props interpoladas
 `string` e `Component` são aliases de `ptr`. Atributos JSX aceitam string
 (`titulo="..."`) ou expressão (`pontos={42}`). Tags minúsculas (`<div>`) são
 HTML literal; só as maiúsculas (`<Card>`) são componentes. Exemplo completo:
-[`examples/exemplo.lex`](examples/exemplo.lex).
+[`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 **Filhos e listas.** Um componente pode receber **filhos** se declarar um campo
 `children: string` (como no React): tudo entre `<Card>` e `</Card>` — texto,
@@ -604,7 +604,7 @@ const page: Component = `<Card title="features">
 ```
 
 `children` é opcional (um `<Card/>` self-closing simplesmente não o passa).
-Exemplo completo: [`examples/exemplo.lex`](examples/exemplo.lex).
+Exemplo completo: [`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### Etapa 2 do "React para lex": WebAssembly
 
@@ -616,7 +616,7 @@ allocator sobre a memória linear, com `mem*`/`str*`/`printf` próprios — ent�
 saída idêntica à do nativo:
 
 ```sh
-./bin/lex examples/exemplo.lex --target wasm -o dados.wasm --run
+./bin/lex src/examples/exemplo.lex --target wasm -o dados.wasm --run
 ./bin/lex dados.wasm            # roda um .wasm já compilado
 ```
 
@@ -698,7 +698,7 @@ Acesso: `jsonGet(j, chave)` (objeto), `jsonAt(j, i)` (array), `len(j)`,
 `jsonTypeof(j)`, `jsonIsNull(j)`. Escalares: `jsonAsInt`/`jsonAsStr`/
 `jsonAsBool`. Construtores: `jsonNum`/`jsonStr`/`jsonBool`/`jsonNull`/
 `jsonObject`/`jsonArray` + `jsonSet`/`jsonPush`. Exemplo completo:
-[`examples/exemplo.lex`](examples/exemplo.lex).
+[`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### Classes: OOP com herança e polimorfismo
 
@@ -789,11 +789,11 @@ campo ou variável — só com `implements`). Faltar um método, divergir a
 assinatura, ou marcá-lo `private` é erro de compilação, com a assinatura
 esperada na mensagem.
 
-Exemplo completo: [`examples/exemplo.lex`](examples/exemplo.lex).
+Exemplo completo: [`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 Um tour por (quase) toda a linguagem num arquivo só — OOP, arrays/strings/maps/
 JSON, erros, funções como valor, threads + canais e memória crua — está em
-[`examples/exemplo.lex`](examples/exemplo.lex).
+[`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ### Operadores, controle de fluxo, floats e genéricos
 
@@ -880,7 +880,7 @@ const nomes: string[] = ["ana", "bia"];
 Terminal.log(`primeiro: ${primeiro(nomes)}`);   // ana — tipo concreto preservado
 ```
 
-Veja tudo junto em [`examples/exemplo.lex`](examples/exemplo.lex).
+Veja tudo junto em [`src/examples/exemplo.lex`](src/examples/exemplo.lex).
 
 ## Testes
 
@@ -959,19 +959,19 @@ conteúdo, floats, coleções), `toBeTruthy`/`toBeFalsy`, `toBeGreaterThan`/
 
 **Testes do próprio compilador.** O compilador é testado *em lex*:
 
-- [`tests/`](tests/) — a suíte por módulo (lexer, parser, sema, codegen, fmt, json,
+- [`src/tests/`](src/tests/) — a suíte por módulo (lexer, parser, sema, codegen, fmt, json,
   toml, semver, pkg, diag, interp, math, strings, e2e). Rode `./bin/lex test tests/*.test.lex`.
-- [`tests/parity.test.lex`](tests/parity.test.lex) — o **portão de paridade**:
+- [`src/tests/parity.test.lex`](src/tests/parity.test.lex) — o **portão de paridade**:
   21 programas de linguagem completa (OOP/vtable, genéricos, `try`/`catch`, `async`/
   `await`, closures com captura, `enum`, `match` com guarda/faixa/destructuring,
   campos `static`, indexação de Map/JSON…) que são compilados, linkados e
   **executados**, conferindo o exit code.
-- [`scripts/bootstrap.sh`](scripts/bootstrap.sh) — o **ponto-fixo**: o compilador
+- [`src/scripts/bootstrap.sh`](src/scripts/bootstrap.sh) — o **ponto-fixo**: o compilador
   recompila a si mesmo duas vezes e a IR tem de sair byte a byte igual.
 
 ## Editor (VS Code)
 
-Há uma extensão em [`editors/vscode-lex`](editors/vscode-lex) que faz **syntax
+Há uma extensão em [`src/editors/vscode-lex`](src/editors/vscode-lex) que faz **syntax
 highlighting** e embute um **cliente LSP** (diagnósticos ao vivo via `lex lsp`).
 O highlighting realça keywords, tipos (`i32`/`i64`/`ptr`/`void`/`string`/
 `Component`/`json`/`Map`/`T[]`), `type`/structs, classes (`class`/`extends`/
@@ -984,12 +984,12 @@ além de auto-fechar aspas/crase e indentar por blocos.
 Para instalar, gere o bundle (precisa de Node) e copie a pasta:
 
 ```sh
-cd editors/vscode-lex && npm install && npm run compile && cd -
-cp -R editors/vscode-lex ~/.vscode/extensions/lex.lex-lang-0.1.0
+cd src/editors/vscode-lex && npm install && npm run compile && cd -
+cp -R src/editors/vscode-lex ~/.vscode/extensions/lex.lex-lang-0.1.0
 # no VS Code: Cmd+Shift+P -> "Developer: Reload Window"
 ```
 
-O cliente acha o servidor procurando `bin/lex` na raiz do workspace — então rode `./scripts/build-seed.sh`
+O cliente acha o servidor procurando `bin/lex` na raiz do workspace — então rode `./src/scripts/build-seed.sh`
 antes. Para apontar um binário específico, use a setting `lex.server.path`. O
 cliente **não** usa o `lex` do PATH por padrão (em Unix `/usr/bin/lex` costuma
 ser o flex). Comando `lex: Reiniciar o Language Server` reinicia o `lex lsp`.
@@ -1012,39 +1012,39 @@ require("lex").setup()                          -- acha o binário no projeto
 - [x] Análise semântica antes do codegen (`sema.rs`)
 - [x] Erros como valores forçados (`!`, `fail`, `try`, `catch`)
 - [x] Threads (`spawn`/`join` via pthreads, sem runtime)
-- [x] `async`/`await` (açúcar sobre threads reais: `async fn` → `Future<T>` via spawn, `await` → join; **sem runtime de async**, sem function coloring/event-loop) ([`examples/exemplo.lex`](examples/exemplo.lex))
-- [x] Suíte de testes EM LEX: por módulo (`tests/`) + portão de paridade ponta-a-ponta (`tests/parity.test.lex`) + ponto-fixo do bootstrap
+- [x] `async`/`await` (açúcar sobre threads reais: `async fn` → `Future<T>` via spawn, `await` → join; **sem runtime de async**, sem function coloring/event-loop) ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
+- [x] Suíte de testes EM LEX: por módulo (`tests/`) + portão de paridade ponta-a-ponta (`src/tests/parity.test.lex`) + ponto-fixo do bootstrap
 - [x] Biblioteca de testes **nativa** ([`src/std/test.lex`](src/std/test.lex)) + runner `lex test`: arquivos `*.test.lex` SEM `main`, só `describe`/`test`/`it`/`expect(x).toBe(y)` (um `expect` p/ qualquer tipo, com matchers); saída colorida e exit code pra CI ([`examples/tests/`](examples/tests/))
 - [x] Sintaxe TypeScript-like (`function`/`fn`, `const`, `: tipo`)
 - [x] Loops (`while`)
 - [x] Retorno padrão 0 (`return;` vazio ou nenhum `return` = `return 0`)
 - [x] Mutabilidade (`let`) com `alloca`/`store`/`load`
-- [x] `main` opcional: statements no topo viram um `main` sintetizado ([`examples/exemplo.lex`](examples/exemplo.lex))
+- [x] `main` opcional: statements no topo viram um `main` sintetizado ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
 - [x] `main` falível (erro não tratado → stderr + exit code)
 - [x] `spawn` fire-and-forget (`pthread_detach`)
 - [x] Funções como valor (`(i64) => i64`) e arrow functions sem captura
 - [x] FFI estilo TS: `declare function` + `import { } from` (com auto-link de `.c`)
 - [x] Strings (literais → constantes globais) e tipo `ptr`
 - [x] `void` e retorno padrão 0 (`return;` / sem return)
-- [x] Servidor HTTP multithread ([`examples/exemplo.lex`](examples/exemplo.lex))
+- [x] Servidor HTTP multithread ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
 - [x] Template literals com arena por thread (runtime embutida)
 - [x] `src/std/http.lex`: servidor como classe (`new Server(porta).start(handler)`, com `Conn`)
 - [x] Structs (`type Nome = {...}`), acesso a campo, `string`/`Component`
-- [x] Componentes estilo React com **JSX** (`<Card .../>`) ([`examples/exemplo.lex`](examples/exemplo.lex))
-- [x] OOP completa: `class`, `new`, `extends`, vtable (polimorfismo), `super`, `private`, `static` ([`examples/exemplo.lex`](examples/exemplo.lex))
-- [x] `interface` + `implements`: contrato de assinaturas checado em compilação (método herdado conta) ([`examples/exemplo.lex`](examples/exemplo.lex))
-- [x] Arrays tipados (`T[]`, `[...]`, `a[i]`, `push`/`pop`/`slice`/`len`/`join`) ([`examples/exemplo.lex`](examples/exemplo.lex))
+- [x] Componentes estilo React com **JSX** (`<Card .../>`) ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
+- [x] OOP completa: `class`, `new`, `extends`, vtable (polimorfismo), `super`, `private`, `static` ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
+- [x] `interface` + `implements`: contrato de assinaturas checado em compilação (método herdado conta) ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
+- [x] Arrays tipados (`T[]`, `[...]`, `a[i]`, `push`/`pop`/`slice`/`len`/`join`) ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
 - [x] Helpers de string (`substring`, `split`, `indexOf`, `toUpper`, `strEq`, …)
 - [x] Map tipado (`Map<T>`, `{ "k": v }`, `mapGet`/`mapSet`/`keys`)
 - [x] JSON dinâmico (`jsonParse`/`jsonStringify` + acessores e construtores)
-- [x] JSX com filhos (`<Card>...</Card>`) e listas (array interpolado no template) ([`examples/exemplo.lex`](examples/exemplo.lex))
+- [x] JSX com filhos (`<Card>...</Card>`) e listas (array interpolado no template) ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
 - [x] Backend WebAssembly (`--target wasm`) — programas puros rodam, libc vira import
 - [x] `sockaddr_in` nativo em lex (aposentou o `std/socket.c`) — via `alloc`/`poke`
 - [x] Mais tipos: `bool` (`true`/`false`) e `i8`
 - [x] Checagem de tipos no struct literal (campo faltando/desconhecido/duplicado)
 - [x] Captura do código de erro no `catch` (`f() catch e { ... }`)
-- [x] `defer` (LIFO, por caminho de saída) e memória dinâmica (`alloc`/`free`, `poke`/`peek`) ([`examples/exemplo.lex`](examples/exemplo.lex))
-- [x] Canais entre threads (`Channel<T>`, `channel`/`send`/`recv`, estilo Go) ([`examples/exemplo.lex`](examples/exemplo.lex))
+- [x] `defer` (LIFO, por caminho de saída) e memória dinâmica (`alloc`/`free`, `poke`/`peek`) ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
+- [x] Canais entre threads (`Channel<T>`, `channel`/`send`/`recv`, estilo Go) ([`src/examples/exemplo.lex`](src/examples/exemplo.lex))
 - [x] Runtime wasm **embutido** no compilador ([`src/wasm_host.rs`](src/wasm_host.rs), via wasmi): `lex app.lex --target wasm --run` e `lex app.wasm` rodam **sem Node**
 - [x] Toolchain de cross-compile **100% LLVM 18, sem zig**: runtime FREESTANDING por SO — Linux via syscalls cruas + `ld.lld`, Windows via Win32 API + `lld-link` (import libs geradas com `llvm-lib`), macOS via `clang -arch`. Verificado em Docker: Linux x64 (qemu)/arm64 (nativo) e Windows x64 (wine) rodam hello/dados/arquivos/threads/canais/servidor idênticos ao nativo
 

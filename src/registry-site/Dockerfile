@@ -1,7 +1,7 @@
 # Imagem do registry-site do lex.
 #
 # Estágio 1: compila o compilador `lex` (Rust + LLVM 18) e CROSS-COMPILA o site
-# (registry-site/server.lex) para um binário ESTÁTICO linux-x64 (runtime
+# (src/registry-site/server.lex) para um binário ESTÁTICO linux-x64 (runtime
 # freestanding do lex: syscalls cruas + ld.lld, sem libc).
 # Estágio 2: imagem mínima `scratch` só com o binário — sem SO, sem libc.
 #
@@ -23,9 +23,9 @@ RUN ln -sf /usr/bin/clang-18 /usr/local/bin/clang \
 WORKDIR /src
 COPY . .
 # o compilador é escrito EM LEX: sai da semente (LLVM IR) via clang, sem Rust.
-RUN ./scripts/build-seed.sh
+RUN ./src/scripts/build-seed.sh
 # binário estático do servidor (roda em qualquer linux-x64, inclusive scratch)
-RUN ./bin/lex build registry-site/server.lex --target linux-x64 -o /registry
+RUN ./bin/lex build src/registry-site/server.lex --target linux-x64 -o /registry
 
 # --- estágio 2: runtime mínimo ---------------------------------------------
 FROM scratch

@@ -81,8 +81,8 @@ Tudo mora num binário só (`lexcli.lex`), que despacha os subcomandos:
 num `bin/lex` sem precisar de compilador lex algum:
 
 ```sh
-./scripts/build-seed.sh    # -> bin/lex, e valida o ponto-fixo
-./scripts/regen-seed.sh    # regere a semente após mudar src/*.lex
+./src/scripts/build-seed.sh    # -> bin/lex, e valida o ponto-fixo
+./src/scripts/regen-seed.sh    # regere a semente após mudar src/*.lex
 ```
 
 A IR da semente é **agnóstica de alvo** (usa `ptr` opaco), então o mesmo arquivo serve

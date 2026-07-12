@@ -1,5 +1,5 @@
 // Testes do JSON-em-lex (F6.11). Rode com:  lex test tests/
-import { jParse, jGet, jStr, jNum, jArr, jPath, jEscape } from "../src/tools/json"
+import { jParse, jGet, jStr, jNum, jArr, jPath, jEscape } from "../tools/json"
 
 describe("json: parse e acessores", () => {
         test("objeto simples", () => {

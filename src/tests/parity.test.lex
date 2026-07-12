@@ -4,7 +4,7 @@
 // Portado de tests/e2e.rs (que morreu junto com o compilador Rust). Cada caso é um
 // programa `main(): i32` que devolve 0 quando todas as verificações passam: o teste
 // compila o fonte, linka com clang e RODA o binário, conferindo o exit code.
-import { compileToIR } from "../src/compiler/codegen"
+import { compileToIR } from "../compiler/codegen"
 
 // fonte -> exit code do binário nativo (-1 se o clang falhar).
 fn runSrc(src: string, name: string): i64 {
@@ -16,6 +16,15 @@ fn runSrc(src: string, name: string): i64 {
 }
 
 describe("linguagem completa (e2e)", () => {
+    // regressão: `continue` num for-of saltava para a CONDIÇÃO, não para o
+    // incremento — o índice nunca avançava e o laço rodava para sempre.
+    test("continue dentro de for-of (não trava)", () => {
+        expect(runSrc("fn main(): i32 {\n  let s: i64 = 0\n  for (const v of [1, 2, 3, 4, 5]) {\n    if (v % 2 == 0) { continue }\n    s = s + v\n  }\n  return s - 9\n}", "cont")).toBe(0);
+    });
+    // regressão: função de topo passada como VALOR (só arrows viravam valor-função)
+    test("função de topo como valor", () => {
+        expect(runSrc("fn dobro(x: i64): i64 { return x * 2 }\nfn apply(f: (i64) => i64, v: i64): i64 { return f(v) }\nfn main(): i32 { return apply(dobro, 21) - 42 }", "fnval")).toBe(0);
+    });
         test("operadores e precedência", () => {
                 expect(runSrc("fn main(): i32 {\nif (2 + 3 * 4 == 14 && 17 % 5 == 2 && (6 & 3) == 2 && (1 << 4) == 16) { return 0; }\nreturn 1;\n}", "c0")).toBe(0);
         });

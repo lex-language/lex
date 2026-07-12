@@ -73,13 +73,44 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "parseInt")) { return "__lex_parse_int"; }
     if (strEq(name, "parseFloat")) { return "__lex_parse_float"; }
     if (strEq(name, "peek8")) { return "__lex_peek8"; }
+    if (strEq(name, "peek16")) { return "__lex_peek16"; }
+    if (strEq(name, "peek32")) { return "__lex_peek32"; }
+    if (strEq(name, "peek64")) { return "__lex_peek64"; }
+    if (strEq(name, "poke8")) { return "__lex_poke8"; }
+    if (strEq(name, "poke16")) { return "__lex_poke16"; }
+    if (strEq(name, "poke32")) { return "__lex_poke32"; }
+    if (strEq(name, "poke64")) { return "__lex_poke64"; }
+    if (strEq(name, "free")) { return "__lex_free"; }
     if (strEq(name, "alloc")) { return "__lex_heap_alloc"; }  // ptr no heap (free-able)
     if (strEq(name, "channel")) { return "__lex_chan_new"; }  // canal de thread
+    if (strEq(name, "malloc")) { return "malloc"; }           // libc (ABI ptr-aware)
+    // helpers de string também como FUNÇÃO LIVRE (`endsWith(s, x)`), não só método
+    if (strEq(name, "contains")) { return "__lex_contains"; }
+    if (strEq(name, "startsWith")) { return "__lex_starts_with"; }
+    if (strEq(name, "endsWith")) { return "__lex_ends_with"; }
+    if (strEq(name, "indexOf")) { return "__lex_index_of"; }
+    if (strEq(name, "split")) { return "__lex_split"; }
+    if (strEq(name, "trim")) { return "__lex_trim"; }
+    if (strEq(name, "toLower")) { return "__lex_to_lower"; }
+    if (strEq(name, "toUpper")) { return "__lex_to_upper"; }
+    if (strEq(name, "replace")) { return "__lex_str_replace"; }
+    if (strEq(name, "charCode")) { return "__lex_char_code"; }
+    if (strEq(name, "repeat")) { return "__lex_str_repeat"; }
     if (strEq(name, "readFile")) { return "__lex_fs_read"; }
     if (strEq(name, "writeFile")) { return "__lex_fs_write"; }
     if (strEq(name, "system")) { return "__lex_system"; }
     if (strEq(name, "args")) { return "__lex_args"; }
     if (strEq(name, "exists")) { return "__lex_fs_exists"; }
+    if (strEq(name, "appendFile")) { return "__lex_fs_append"; }
+    if (strEq(name, "isFile")) { return "__lex_fs_is_file"; }
+    if (strEq(name, "isDir")) { return "__lex_fs_is_dir"; }
+    if (strEq(name, "fileSize")) { return "__lex_fs_size"; }
+    if (strEq(name, "remove")) { return "__lex_fs_remove"; }
+    if (strEq(name, "rename")) { return "__lex_fs_rename"; }
+    if (strEq(name, "mkdir")) { return "__lex_fs_mkdir"; }
+    if (strEq(name, "rmdir")) { return "__lex_fs_rmdir"; }
+    if (strEq(name, "readDir")) { return "__lex_fs_list"; }
+    if (strEq(name, "openFile")) { return "__lex_fs_open"; }
     if (strEq(name, "readStdin")) { return "__lex_read_stdin"; }
     if (strEq(name, "mapGet")) { return "__lex_map_get"; }
     if (strEq(name, "mapSet")) { return "__lex_map_set"; }
@@ -93,6 +124,11 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "jsonStr")) { return "__lex_json_str"; }
     if (strEq(name, "jsonFloat")) { return "__lex_json_float"; }
     if (strEq(name, "jsonParse")) { return "__lex_json_parse"; }
+    if (strEq(name, "jsonArray")) { return "__lex_json_array"; }
+    if (strEq(name, "jsonObject")) { return "__lex_json_object"; }
+    if (strEq(name, "jsonPush")) { return "__lex_json_push"; }
+    if (strEq(name, "jsonSet")) { return "__lex_json_set"; }
+    if (strEq(name, "jsonStringify")) { return "__lex_json_stringify"; }
     if (strEq(name, "jsonGet")) { return "__lex_json_get"; }
     if (strEq(name, "jsonAt")) { return "__lex_json_at"; }
     if (strEq(name, "jsonBool")) { return "__lex_json_bool"; }
@@ -142,6 +178,10 @@ fn rtAbi(sym: string): string {
     if (strEq(sym, "__lex_f64_to_str")) { return ".|p"; }
     if (strEq(sym, "__lex_parse_int")) { return "p|."; }
     if (strEq(sym, "__lex_parse_float")) { return "p|."; }
+    if (strEq(sym, "__lex_index_of")) { return "pp|."; }
+    if (strEq(sym, "__lex_split")) { return "pp|p"; }
+    if (strEq(sym, "__lex_char_code")) { return "p.|."; }
+    if (strEq(sym, "__lex_str_repeat")) { return "p.|p"; }
     // arrays
     if (strEq(sym, "__lex_arr_new")) { return ".|p"; }
     if (strEq(sym, "__lex_arr_len")) { return "p|."; }
@@ -184,6 +224,12 @@ fn rtAbi(sym: string): string {
     if (strEq(sym, "__lex_fs_read")) { return "p|p"; }
     if (strEq(sym, "__lex_fs_write")) { return "pp|."; }
     if (strEq(sym, "__lex_fs_exists")) { return "p|."; }
+    if (strEq(sym, "__lex_fs_append") || strEq(sym, "__lex_fs_rename")) { return "pp|."; }
+    if (strEq(sym, "__lex_fs_is_file") || strEq(sym, "__lex_fs_is_dir")
+        || strEq(sym, "__lex_fs_size") || strEq(sym, "__lex_fs_remove")
+        || strEq(sym, "__lex_fs_mkdir") || strEq(sym, "__lex_fs_rmdir")) { return "p|."; }
+    if (strEq(sym, "__lex_fs_list")) { return "p|p"; }
+    if (strEq(sym, "__lex_fs_open")) { return "p.|."; }
     if (strEq(sym, "__lex_read_stdin")) { return ".|p"; }
     if (strEq(sym, "__lex_system")) { return "p|."; }
     if (strEq(sym, "__lex_args")) { return "|."; }
@@ -214,6 +260,7 @@ fn rtSymbols(): string[] {
         "__lex_starts_with", "__lex_ends_with", "__lex_substring", "__lex_char_at",
         "__lex_to_lower", "__lex_to_upper", "__lex_trim", "__lex_str_replace",
         "__lex_i64_to_str", "__lex_f64_to_str", "__lex_parse_int", "__lex_parse_float",
+        "__lex_index_of", "__lex_split", "__lex_char_code", "__lex_str_repeat",
         "__lex_arr_new", "__lex_arr_len", "__lex_arr_push", "__lex_arr_pop",
         "__lex_arr_get", "__lex_arr_set", "__lex_arr_join",
         "__lex_map_new", "__lex_map_len", "__lex_map_get", "__lex_map_set",
@@ -226,6 +273,9 @@ fn rtSymbols(): string[] {
         "__lex_json_set", "__lex_json_eq", "__lex_json_as_int",
         "__lex_json_as_float", "__lex_json_as_str", "__lex_json_stringify",
         "__lex_fs_read", "__lex_fs_write", "__lex_fs_exists", "__lex_read_stdin",
+        "__lex_fs_append", "__lex_fs_is_file", "__lex_fs_is_dir", "__lex_fs_size",
+        "__lex_fs_remove", "__lex_fs_rename", "__lex_fs_mkdir", "__lex_fs_rmdir",
+        "__lex_fs_list", "__lex_fs_open",
         "__lex_system", "__lex_args",
         "__lex_gget", "__lex_gset", "__lex_set_err", "__lex_has_err", "__lex_take_err",
         "__lex_f_abs", "__lex_f_sqrt", "__lex_f_pow", "__lex_f_floor", "__lex_f_ceil",
@@ -428,6 +478,7 @@ class Codegen {
     curRet: string        // tipo de retorno da função atual (p/ coagir o `return`)
     curCaptures: string[] // se a função atual é uma arrow: nomes lidos do env
     lambdaFuncs: Func[]   // as arrows içadas (p/ achar as capturas de cada uma)
+    fnValNames: string[]  // funções de topo usadas como VALOR (ganham um wrapper)
     staticClasses: ClassDecl[]  // classes com campos static (inicializados no main)
 
     constructor(sema: Sema) {
@@ -441,6 +492,7 @@ class Codegen {
         this.curRet = ""
         this.curCaptures = []
         this.lambdaFuncs = []
+        this.fnValNames = []
         this.staticClasses = []
         this.tmp = 0
         this.lbl = 0
@@ -556,9 +608,48 @@ class Codegen {
         if (this.isGlobalVar(name)) {
             return this.rtCall("__lex_gget", [str(this.slotOfGlobal(name))]);
         }
+        // FUNÇÃO DE TOPO usada como VALOR (`srv.start(handle)`): vira uma closure
+        // sem capturas. Como o valor-função é sempre uma closure — e a chamada
+        // indireta passa o env como 1º argumento —, a closure aponta para um
+        // WRAPPER que engole o env e repassa os args à função de verdade.
+        if (this.bindIndex(name) < 0 && idxOf(this.curLocals, name) < 0
+            && this.sema.funcIndex(name) >= 0) {
+            return this.genFnValue(name);
+        }
         const t: string = this.newTmp();
         this.emit(`  ${t} = load i64, ptr ${this.varAddrOf(name)}`);
         return t;
+    }
+    // closure de 1 slot apontando p/ o wrapper @__fnval_<name>.
+    genFnValue(name: string): string {
+        addUniq(this.fnValNames, name);
+        const env: string = this.rtCall("__lex_heap_alloc", [str(8)]);
+        const p: string = this.newTmp();
+        this.emit(`  ${p} = inttoptr i64 ${env} to ptr`);
+        this.emit(`  store i64 ptrtoint (ptr @__fnval_${name} to i64), ptr ${p}`);
+        return env;
+    }
+    // define i64 @__fnval_f(i64 %__env, i64 %p0, …) { ret @f(%p0, …) }
+    genFnValWrapper(name: string) {
+        this.tmp = 0;
+        const n: i64 = this.sema.funcParamTypes(name).len();
+        let ps: string = "i64 %__env";
+        let ar: string = "";
+        let i: i64 = 0;
+        while (i < n) {
+            ps = concat(ps, `, i64 %p${i}`);
+            if (i > 0) { ar = concat(ar, ", "); }
+            ar = concat(ar, `i64 %p${i}`);
+            i = i + 1;
+        }
+        this.raw(`define i64 @__fnval_${name}(${ps}) {`);
+        this.term = false;
+        const r: string = this.newTmp();
+        this.emit(`  ${r} = call i64 @${name}(${ar})`);
+        this.emit(`  ret i64 ${r}`);
+        this.term = true;
+        this.raw("}");
+        this.raw("");
     }
 
     genUnary(u: Unary): string {
@@ -1150,6 +1241,10 @@ class Codegen {
         if (strEq(m.method, "contains")) { return this.strMethod1("__lex_contains", bv, m.args); }
         if (strEq(m.method, "startsWith")) { return this.strMethod1("__lex_starts_with", bv, m.args); }
         if (strEq(m.method, "endsWith")) { return this.strMethod1("__lex_ends_with", bv, m.args); }
+        if (strEq(m.method, "split")) { return this.strMethod1("__lex_split", bv, m.args); }
+        if (strEq(m.method, "indexOf")) { return this.strMethod1("__lex_index_of", bv, m.args); }
+        if (strEq(m.method, "repeat")) { return this.strMethod1("__lex_str_repeat", bv, m.args); }
+        if (strEq(m.method, "charCode")) { return this.strMethod1("__lex_char_code", bv, m.args); }
         if (strEq(m.method, "trim")) { return this.rtCall("__lex_trim", [bv]); }
         if (strEq(m.method, "toLower")) { return this.rtCall("__lex_to_lower", [bv]); }
         if (strEq(m.method, "toUpper")) { return this.rtCall("__lex_to_upper", [bv]); }
@@ -1545,6 +1640,7 @@ class Codegen {
 
         const lcond: string = this.newLabel();
         const lbody: string = this.newLabel();
+        const lincr: string = this.newLabel();
         const lend: string = this.newLabel();
         this.emit(`  br label %${lcond}`); this.term = true;
 
@@ -1559,18 +1655,23 @@ class Codegen {
         this.label(lbody);
         const ev: string = this.rtCall("__lex_arr_get", [iter, iv]);
         this.emit(`  store i64 ${ev}, ptr ${xa}`);
-        this.loopCond.push(lcond);
+        // `continue` salta para o INCREMENTO, não para a condição. Se saltasse para
+        // a condição, o índice nunca avançaria — `continue` num for-of era um LOOP
+        // INFINITO. (O for C-style já fazia certo: ele salta para o `update`.)
+        this.loopCond.push(lincr);
         this.loopEnd.push(lend);
         this.genStmts(fo.body);
         this.loopCond.pop();
         this.loopEnd.pop();
-        if (!this.term) {
-            const i2: string = this.newTmp();
-            this.emit(`  ${i2} = load i64, ptr ${ia}`);
-            const i3: string = this.bin("add", i2, "1");
-            this.emit(`  store i64 ${i3}, ptr ${ia}`);
-            this.emit(`  br label %${lcond}`); this.term = true;
-        }
+        if (!this.term) { this.emit(`  br label %${lincr}`); this.term = true; }
+
+        this.label(lincr);
+        const i2: string = this.newTmp();
+        this.emit(`  ${i2} = load i64, ptr ${ia}`);
+        const i3: string = this.bin("add", i2, "1");
+        this.emit(`  store i64 ${i3}, ptr ${ia}`);
+        this.emit(`  br label %${lcond}`); this.term = true;
+
         this.label(lend);
         return 0;
     }
@@ -2150,6 +2251,23 @@ class Codegen {
         this.raw("@.lex_fmt_str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"");
         this.raw("declare i32 @printf(ptr, ...)");
         for (const sym of rtSymbols()) { this.raw(this.rtDecl(sym)); }
+        // símbolos EXTERNOS (`declare function` — libc, SO). Tudo trafega em célula
+        // i64: no ABI de 64 bits um ponteiro e um inteiro vão no mesmo registrador.
+        for (const e of prog.externs) {
+            // já declarado pela tabela de ABI (ex.: `malloc`)? não redeclarar.
+            if (strEq(rtAbi(e.name), "")) {
+                let ps: string = "";
+                let i: i64 = 0;
+                while (i < e.params.len()) {
+                    if (i > 0) { ps = concat(ps, ", "); }
+                    ps = concat(ps, "i64");
+                    i = i + 1;
+                }
+                let rt: string = "i64";
+                if (strEq(e.ret, "void")) { rt = "void"; }
+                this.raw(`declare ${rt} @${e.name}(${ps})`);
+            }
+        }
         // threads (só nativo; no wasm o spawn precisaria do host)
         this.raw("declare i32 @pthread_create(ptr, ptr, ptr, ptr)");
         this.raw("declare i32 @pthread_join(i64, ptr)");
@@ -2173,6 +2291,7 @@ class Codegen {
             this.genThunk(this.thunkNames[ti], this.thunkArity[ti]);
             ti = ti + 1;
         }
+        for (const fv of this.fnValNames) { this.genFnValWrapper(fv); }
         // globais de string literais (ordem livre no módulo → no fim)
         for (const g of this.strs) { this.raw(g); }
         return 0;

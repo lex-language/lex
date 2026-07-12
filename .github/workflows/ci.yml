@@ -26,24 +26,24 @@ jobs:
 
       # Constrói o lex a partir da semente E valida o ponto-fixo (o compilador
       # reproduz a si mesmo byte a byte). Se a semente estiver dessincronizada do
-      # fonte, isto falha — rode ./scripts/regen-seed.sh e commite.
+      # fonte, isto falha — rode ./src/scripts/regen-seed.sh e commite.
       - name: bootstrap a partir da semente
-        run: ./scripts/build-seed.sh
+        run: ./src/scripts/build-seed.sh
 
       # a suíte por módulo (o portão de paridade roda no passo seguinte)
       - name: suíte de testes
         run: |
-          for f in tests/*.test.lex; do
-            [ "$f" = "tests/parity.test.lex" ] && continue
+          for f in src/tests/*.test.lex; do
+            [ "$f" = "src/tests/parity.test.lex" ] && continue
             ./bin/lex test "$f" || exit 1
           done
 
       - name: portão de paridade (linguagem completa, e2e)
-        run: ./bin/lex test tests/parity.test.lex
+        run: ./bin/lex test src/tests/parity.test.lex
 
       - name: check (tipos/sintaxe) sem falso-positivo no próprio repo
         run: |
-          for f in src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex examples/*.lex; do
+          for f in src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex src/examples/*.lex; do
             out=$(./bin/lex check "$f")
             [ "$out" = "[]" ] || { echo "diagnóstico inesperado em $f: $out"; exit 1; }
           done
@@ -52,7 +52,7 @@ jobs:
         run: ./bin/lex fmt --check src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex
 
       - name: exemplo.lex compila e roda
-        run: ./bin/lex run examples/exemplo.lex
+        run: ./bin/lex run src/examples/exemplo.lex
 
       - name: alvo wasm32
-        run: ./bin/lex build examples/exemplo.lex --target wasm -o /tmp/exemplo.wasm
+        run: ./bin/lex build src/examples/exemplo.lex --target wasm -o /tmp/exemplo.wasm

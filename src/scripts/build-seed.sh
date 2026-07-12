@@ -8,9 +8,9 @@
 # suporte. Depois de ter o `bin/lex`, ele recompila a si mesmo a partir do FONTE —
 # a semente só existe para o primeiro passo.
 #
-#   ./scripts/build-seed.sh          # -> bin/lex
+#   ./src/scripts/build-seed.sh          # -> bin/lex
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 mkdir -p bin
 TMP="$(mktemp -d)"
@@ -30,7 +30,7 @@ if diff -q "$TMP/lex1.ll" "$TMP/lex2.ll" >/dev/null; then
     echo "    ✓ ponto-fixo: o compilador reproduz a si mesmo byte a byte"
 else
     echo "    ✗ ponto-fixo QUEBRADO — a semente está fora de sincronia com o fonte"
-    echo "      rode ./scripts/regen-seed.sh para regerá-la"
+    echo "      rode ./src/scripts/regen-seed.sh para regerá-la"
     exit 1
 fi
 

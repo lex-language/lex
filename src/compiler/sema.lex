@@ -413,6 +413,16 @@ fn builtinFnRet(name: string): string {
     if (strEq(name, "str")) { return "string"; }
     if (strEq(name, "parseInt")) { return "i64"; }
     if (strEq(name, "parseFloat")) { return "f64"; }
+    if (strEq(name, "contains") || strEq(name, "startsWith") || strEq(name, "endsWith")
+        || strEq(name, "indexOf") || strEq(name, "charCode")) { return "i64"; }
+    if (strEq(name, "trim") || strEq(name, "toLower") || strEq(name, "toUpper")
+        || strEq(name, "replace") || strEq(name, "repeat")) { return "string"; }
+    if (strEq(name, "split")) { return "string[]"; }
+    if (strEq(name, "readDir")) { return "string[]"; }
+    if (strEq(name, "isFile") || strEq(name, "isDir") || strEq(name, "fileSize")
+        || strEq(name, "remove") || strEq(name, "rename") || strEq(name, "mkdir")
+        || strEq(name, "rmdir") || strEq(name, "openFile")
+        || strEq(name, "appendFile")) { return "i64"; }
     if (strEq(name, "jsonAsFloat")) { return "f64"; }   // extrator de any → f64
     if (strEq(name, "jsonAsInt")) { return "i64"; }
     if (strEq(name, "jsonAsStr")) { return "string"; }
@@ -428,7 +438,11 @@ fn builtinFnRet(name: string): string {
         || strEq(name, "ceil") || strEq(name, "round") || strEq(name, "sin")
         || strEq(name, "cos") || strEq(name, "tan") || strEq(name, "exp")
         || strEq(name, "ln") || strEq(name, "log10")) { return "f64"; }
-    if (strEq(name, "peek8")) { return "i64"; }
+    if (strEq(name, "peek8") || strEq(name, "peek16") || strEq(name, "peek32")
+        || strEq(name, "peek64")) { return "i64"; }
+    if (strEq(name, "poke8") || strEq(name, "poke16") || strEq(name, "poke32")
+        || strEq(name, "poke64") || strEq(name, "free")) { return "void"; }
+    if (strEq(name, "alloc")) { return "ptr"; }
     if (strEq(name, "readFile")) { return "string"; }
     if (strEq(name, "writeFile")) { return "i64"; }
     if (strEq(name, "system")) { return "i64"; }
@@ -676,6 +690,9 @@ class Sema {
         if (strEq(m.method, "contains") || strEq(m.method, "startsWith")
             || strEq(m.method, "endsWith")) { return "i64"; }   // 0/1
         if (strEq(m.method, "join")) { return "string"; }   // string[].join(sep) → string
+        if (strEq(m.method, "split")) { return "string[]"; }
+        if (strEq(m.method, "indexOf") || strEq(m.method, "charCode")) { return "i64"; }
+        if (strEq(m.method, "repeat")) { return "string"; }
         if (strEq(m.method, "jsonStringify")) { return "string"; }
         if (strEq(m.method, "jsonSet") || strEq(m.method, "mapSet")) { return "void"; }
         if (strEq(m.method, "mapGet")) { return elementTy(bt); }

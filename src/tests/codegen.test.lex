@@ -1,6 +1,6 @@
 // Testes do codegen-em-lex (Fase 5). Rode com:  lex test tests/
 // Confere fragmentos do LLVM IR gerado (contains devolve i64 0/1).
-import { compileToIR } from "../src/compiler/codegen"
+import { compileToIR } from "../compiler/codegen"
 
 describe("codegen LLVM IR", () => {
         test("função aritmética", () => {

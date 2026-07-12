@@ -296,9 +296,11 @@ class Program {
     classes: ClassDecl[]
     funcs: Func[]
     main: Stmt[]
+    externs: Func[]     // `declare function f(...)` — símbolos de fora (libc, SO)
     constructor(imports: Import[], enums: EnumDecl[], classes: ClassDecl[], funcs: Func[], main: Stmt[]) {
         this.imports = imports; this.enums = enums
         this.classes = classes; this.funcs = funcs; this.main = main
+        this.externs = []
     }
 }
 
@@ -337,6 +339,7 @@ fn tokName(k: Tok): string {
 // ── o parser ────────────────────────────────────────────────────────────────
 class Parser {
     curClassName: string    // classe sendo parseada (p/ tipar o `this` capturado)
+    externs: Func[]         // `declare function` — assinaturas de símbolos externos
     toks: Token[]
     pos: i64
     lambdas: Func[]    // arrow functions içadas (anexadas a `funcs` em parseModule)
@@ -345,6 +348,7 @@ class Parser {
     errPos: i64[]      // posição (offset de byte) de cada erro
     constructor(toks: Token[]) {
         this.curClassName = ""
+        this.externs = []
         this.toks = toks
         this.pos = 0
         this.lambdas = []
@@ -1104,14 +1108,32 @@ class Parser {
         // tratamento próprio: o `function` logo em seguida faria o laço abaixo
         // parar e a assinatura seria parseada como uma função sem corpo (era o
         // que quebrava o std/libc.lex).
+        // `declare function f(params): T;` — NAO é erasure: é um SÍMBOLO EXTERNO
+        // (libc, SO). Precisamos da assinatura p/ emitir o `declare` na IR, senão o
+        // linker não acha `@accept`, `@write`, etc.
         if (k0 == Tok.Declare && this.peekKind() == Tok.Function) {
             this.advance();                          // function
-            this.advance();                          // nome
+            const ename: string = this.advance().text;
             this.skipTypeArgs();
-            if (this.peekKind() == Tok.LParen) { this.skipBalancedParens(); }
-            if (this.peekKind() == Tok.Colon) { this.advance(); this.parseTypeStr(); }
+            let eparams: Param[] = [];
+            if (this.peekKind() == Tok.LParen) {
+                this.advance();
+                while (this.peekKind() != Tok.RParen && this.peekKind() != Tok.Eof) {
+                    if (this.peekKind() == Tok.Comma) { this.advance(); continue; }
+                    if (this.peekKind() == Tok.DotDotDot) { this.advance(); }
+                    const pn: string = this.advance().text;
+                    let pt: string = "";
+                    if (this.peekKind() == Tok.Colon) { this.advance(); pt = this.parseTypeStr(); }
+                    eparams.push(new Param(pn, pt));
+                }
+                this.expect(Tok.RParen);
+            }
+            let eret: string = "void";
+            if (this.peekKind() == Tok.Colon) { this.advance(); eret = this.parseTypeStr(); }
             if (this.peekKind() == Tok.Bang) { this.advance(); }
             this.eatSemi();
+            let nobody: Stmt[] = [];
+            this.externs.push(new Func(ename, eparams, eret, false, nobody));
             return;
         }
         while (true) {
@@ -1143,7 +1165,9 @@ class Parser {
             else { main.push(this.parseStmt()); }   // statement de topo (script-mode)
         }
         for (const lm of this.lambdas) { funcs.push(lm); }   // arrow functions içadas
-        return new Program(imports, enums, classes, funcs, main);
+        const prog: Program = new Program(imports, enums, classes, funcs, main);
+        prog.externs = this.externs;
+        return prog;
     }
 
     // Compat: quem só quer as funções de topo.

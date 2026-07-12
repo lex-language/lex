@@ -98,12 +98,14 @@ fn resolveImport(importer: string, spec: string): string {
 
 class ModuleLoader {
     visited: string[]
+    externs: Func[]
     classes: ClassDecl[]
     enums: EnumDecl[]
     funcs: Func[]
     main: Stmt[]
     constructor() {
         this.visited = []
+        this.externs = []
         this.classes = []
         this.enums = []
         this.funcs = []
@@ -131,11 +133,14 @@ class ModuleLoader {
         for (const e of prog.enums) { this.enums.push(e); }
         for (const f of prog.funcs) { this.funcs.push(f); }
         for (const s of prog.main) { this.main.push(s); }   // só o entry tem main
+        for (const e of prog.externs) { this.externs.push(e); }
     }
 
     toProgram(): Program {
         let noImports: Import[] = [];
-        return new Program(noImports, this.enums, this.classes, this.funcs, this.main);
+        const prog: Program = new Program(noImports, this.enums, this.classes, this.funcs, this.main);
+        prog.externs = this.externs;
+        return prog;
     }
 }
 
