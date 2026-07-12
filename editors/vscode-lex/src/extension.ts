@@ -34,7 +34,7 @@ function start(context: vscode.ExtensionContext): void {
   if (!command) {
     vscode.window
       .showWarningMessage(
-        "lex: não achei o binário do compilador. Rode `cargo build --release` " +
+        "lex: não achei o binário do compilador. Rode `./selfhost/build-seed.sh` " +
           "ou configure `lex.server.path` para os diagnósticos ao vivo.",
         "Abrir configuração",
       )
@@ -72,8 +72,8 @@ function start(context: vscode.ExtensionContext): void {
   client.start();
 }
 
-// Ordem de resolução: 1) setting `lex.server.path`; 2) `target/release/lex` e
-// depois `target/debug/lex` em cada pasta do workspace. NÃO cai pro PATH —
+// Ordem de resolução: 1) setting `lex.server.path`; 2) `bin/lex` em cada pasta do
+// workspace (gerado por ./selfhost/build-seed.sh). NÃO cai pro PATH —
 // em Unix `/usr/bin/lex` é o flex, não o compilador.
 function resolveServerPath(): string | undefined {
   const configured = vscode.workspace
@@ -87,7 +87,7 @@ function resolveServerPath(): string | undefined {
   const folders = vscode.workspace.workspaceFolders ?? [];
   for (const folder of folders) {
     const root = folder.uri.fsPath;
-    for (const rel of ["target/release/lex", "target/debug/lex"]) {
+    for (const rel of ["bin/lex"]) {
       const candidate = path.join(root, rel);
       if (fs.existsSync(candidate)) {
         return candidate;

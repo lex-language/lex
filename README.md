@@ -5,66 +5,78 @@
 Uma linguagem de baixo nível com **sintaxe TypeScript-like** — e melhorias onde
 o TypeScript é fraco: tipos inteiros de verdade (`i32`/`i64`), erros checados
 em tempo de compilação e threads reais — compilada **direto para LLVM IR**,
-sem GC e sem runtime. O compilador (`lex`) é escrito em Rust e usa o
-[`inkwell`](https://github.com/TheDan64/inkwell) como ponte para o LLVM — a
-mesma arquitetura do próprio compilador de Rust (`rustc`).
+sem GC e sem runtime.
+
+O compilador **é escrito na própria linguagem** (`selfhost/`). Ele compila a si
+mesmo até o **ponto-fixo** — recompilar o compilador com ele mesmo reproduz o
+mesmo LLVM IR, byte a byte. Não há Rust no repositório: o único requisito é o
+clang/LLVM.
 
 ```
-fonte .lex → lexer → tokens → parser → AST → sema → codegen (inkwell) → LLVM IR → .o → binário
+fonte .lex → lexer → tokens → parser → AST → sema/typecheck → codegen → LLVM IR (texto) → clang → binário
 ```
 
 ## Pré-requisitos
 
-- Rust (cargo)
-- LLVM 18 (`brew install llvm@18`)
-- clang (usado como linker — já vem no macOS)
+- **clang / LLVM 18** (`brew install llvm@18` no macOS)
+  O `wasm-ld` e o `llvm-lib` (para `--target wasm` e `--target windows-*`) vêm
+  junto; o compilador os procura em `/opt/homebrew/opt/llvm@18/bin`.
 
-O caminho do LLVM e as libs de sistema estão fixados em
-[`.cargo/config.toml`](.cargo/config.toml), então `cargo build` funciona direto:
+## Bootstrap (como o compilador nasce sem um compilador)
 
-- `LLVM_SYS_180_PREFIX` → aponta o `llvm-sys` para o LLVM 18 do Homebrew (keg-only).
-- `rustflags = ["-L", "/opt/homebrew/lib"]` → o LLVM 18 linka com `zstd`/`libxml2`.
+O repositório traz uma **semente**: [`selfhost/lex-seed.ll.gz`](selfhost/lex-seed.ll.gz),
+que é o LLVM IR do próprio compilador-em-lex, no ponto-fixo. O clang a transforma
+num `bin/lex`, e a partir daí o `lex` recompila a si mesmo **a partir do fonte**:
 
-> A feature do inkwell para o LLVM 18 chama-se `llvm18-0` (não `llvm18-1`).
+```sh
+./selfhost/build-seed.sh     # -> bin/lex  (só precisa de clang)
+```
+
+O script termina validando o ponto-fixo. Se você mudar `selfhost/*.lex`, regere a
+semente antes de commitar:
+
+```sh
+./selfhost/regen-seed.sh
+```
+
+> A IR da semente é **agnóstica de alvo** (usa `ptr` opaco e células i64), então o
+> mesmo arquivo serve em qualquer plataforma que o clang suporte.
 
 ## Uso
 
 ```sh
-cargo build
+./selfhost/build-seed.sh         # constrói bin/lex a partir da semente
 
-# ajuda e versão (lex sozinho também mostra a ajuda)
-./target/debug/lex help          # ou -h / --help
-./target/debug/lex help add      # ajuda detalhada de um comando (ou: lex add --help)
-./target/debug/lex version       # ou -v / --version
+./bin/lex version
 
 # compila para um binário nativo
-./target/debug/lex examples/exemplo.lex -o exemplo
+./bin/lex examples/exemplo.lex -o exemplo
 ./exemplo; echo $?      # roda o tour e sai com 0
 
 # mostra o LLVM IR gerado (ótimo para aprender)
-./target/debug/lex examples/exemplo.lex --emit-ir
+./bin/lex examples/exemplo.lex --emit-ir
 
 # compila e executa em um comando só
-./target/debug/lex examples/exemplo.lex --run
+./bin/lex examples/exemplo.lex --run
 
 # compila para WebAssembly (.wasm) e roda no runtime embutido (sem Node)
-./target/debug/lex examples/exemplo.lex --target wasm -o exemplo.wasm --run
-./target/debug/lex exemplo.wasm          # ou roda um .wasm já compilado
+./bin/lex examples/exemplo.lex --target wasm -o exemplo.wasm --run
+./bin/lex exemplo.wasm          # ou roda um .wasm já compilado
 #   no browser, abra web/index.html e escolha o .wasm (veja web/README.md)
 
 # cross-compile para outro SO/arquitetura — toolchain 100% LLVM 18, SEM zig:
 #   macOS:   clang + SDK do sistema
 #   Linux:   runtime FREESTANDING (syscalls cruas) + ld.lld → binário estático
 #   Windows: runtime FREESTANDING (Win32 API) + lld-link (import libs via llvm-lib)
-./target/debug/lex examples/exemplo.lex --target linux-x64   -o exemplo-linux
-./target/debug/lex examples/exemplo.lex --target windows-x64 -o exemplo.exe
-./target/debug/lex examples/exemplo.lex --target macos-x64   -o exemplo-x64
+./bin/lex examples/exemplo.lex --target linux-x64   -o exemplo-linux
+./bin/lex examples/exemplo.lex --target windows-x64 -o exemplo.exe
+./bin/lex examples/exemplo.lex --target macos-x64   -o exemplo-x64
 #   alvos: linux-x64, linux-arm64, windows-x64, windows-arm64, macos-x64, macos-arm64
 
 # modo watcher: recompila a cada alteração nos fontes (.lex/.c);
 # com --run, também re-executa o binário (mata o processo anterior —
 # perfeito para os servidores HTTP)
-./target/debug/lex examples/exemplo.lex --watch --run
+./bin/lex examples/exemplo.lex --watch --run
 ```
 
 **Multiplataforma.** O mesmo código lex roda em três frentes:
@@ -491,7 +503,7 @@ Com isso, o lex roda um **servidor HTTP multithread de verdade** — uma thread
 por conexão, porta ocupada tratada à força pelo compilador:
 
 ```sh
-./target/debug/lex examples/exemplo.lex -o servidor
+./bin/lex examples/exemplo.lex -o servidor
 ./servidor &
 curl localhost:8080        # -> ola do lex!
 ```
@@ -558,7 +570,7 @@ function main(): i32! {
 ```
 
 ```sh
-./target/debug/lex examples/exemplo.lex -o site
+./bin/lex examples/exemplo.lex -o site
 ./site &
 curl localhost:8080      # HTML composto pelos componentes, props interpoladas
 ```
@@ -604,8 +616,8 @@ allocator sobre a memória linear, com `mem*`/`str*`/`printf` próprios — ent�
 saída idêntica à do nativo:
 
 ```sh
-./target/debug/lex examples/exemplo.lex --target wasm -o dados.wasm --run
-./target/debug/lex dados.wasm            # roda um .wasm já compilado
+./bin/lex examples/exemplo.lex --target wasm -o dados.wasm --run
+./bin/lex dados.wasm            # roda um .wasm já compilado
 ```
 
 `--run` (e `lex arquivo.wasm`) executam o módulo num **runtime wasm embutido no
@@ -945,11 +957,17 @@ conteúdo, floats, coleções), `toBeTruthy`/`toBeFalsy`, `toBeGreaterThan`/
 > (`new Test()` + `eq`/`ok`/`eqStr`/`near` + `done()`) quando quiser o placar à
 > mão. Veja [`examples/teste.lex`](examples/teste.lex).
 
-**Testes do próprio compilador (`cargo test`).** À parte dos testes em lex, o
-compilador tem sua suíte em Rust: unitários do front-end (lexer/parser/sema, em
-[`src/tests.rs`](src/tests.rs)) e ponta-a-ponta ([`tests/e2e.rs`](tests/e2e.rs))
-que compilam e **executam** programas conferindo o exit code — inclusive a
-própria `std/test.lex` e o modo `.test.lex`.
+**Testes do próprio compilador.** O compilador é testado *em lex*:
+
+- [`tests/`](tests/) — a suíte por módulo (lexer, parser, sema, codegen, fmt, json,
+  toml, semver, pkg, diag, interp, math, strings, e2e). Rode `./bin/lex test tests/*.test.lex`.
+- [`selfhost/parity.test.lex`](selfhost/parity.test.lex) — o **portão de paridade**:
+  21 programas de linguagem completa (OOP/vtable, genéricos, `try`/`catch`, `async`/
+  `await`, closures com captura, `enum`, `match` com guarda/faixa/destructuring,
+  campos `static`, indexação de Map/JSON…) que são compilados, linkados e
+  **executados**, conferindo o exit code.
+- [`selfhost/bootstrap.sh`](selfhost/bootstrap.sh) — o **ponto-fixo**: o compilador
+  recompila a si mesmo duas vezes e a IR tem de sair byte a byte igual.
 
 ## Editor (VS Code)
 
@@ -971,8 +989,7 @@ cp -R editors/vscode-lex ~/.vscode/extensions/lex.lex-lang-0.1.0
 # no VS Code: Cmd+Shift+P -> "Developer: Reload Window"
 ```
 
-O cliente acha o servidor procurando `target/release/lex` (e depois
-`target/debug/lex`) na raiz do workspace — então rode `cargo build --release`
+O cliente acha o servidor procurando `bin/lex` na raiz do workspace — então rode `./selfhost/build-seed.sh`
 antes. Para apontar um binário específico, use a setting `lex.server.path`. O
 cliente **não** usa o `lex` do PATH por padrão (em Unix `/usr/bin/lex` costuma
 ser o flex). Comando `lex: Reiniciar o Language Server` reinicia o `lex lsp`.
@@ -996,7 +1013,7 @@ require("lex").setup()                          -- acha o binário no projeto
 - [x] Erros como valores forçados (`!`, `fail`, `try`, `catch`)
 - [x] Threads (`spawn`/`join` via pthreads, sem runtime)
 - [x] `async`/`await` (açúcar sobre threads reais: `async fn` → `Future<T>` via spawn, `await` → join; **sem runtime de async**, sem function coloring/event-loop) ([`examples/exemplo.lex`](examples/exemplo.lex))
-- [x] Suíte de testes (`cargo test`): unitários do front-end (lexer/parser/sema) + ponta-a-ponta que compila e roda programas conferindo o exit code
+- [x] Suíte de testes EM LEX: por módulo (`tests/`) + portão de paridade ponta-a-ponta (`selfhost/parity.test.lex`) + ponto-fixo do bootstrap
 - [x] Biblioteca de testes **nativa** ([`std/test.lex`](std/test.lex)) + runner `lex test`: arquivos `*.test.lex` SEM `main`, só `describe`/`test`/`it`/`expect(x).toBe(y)` (um `expect` p/ qualquer tipo, com matchers); saída colorida e exit code pra CI ([`examples/tests/`](examples/tests/))
 - [x] Sintaxe TypeScript-like (`function`/`fn`, `const`, `: tipo`)
 - [x] Loops (`while`)

@@ -20,15 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN ln -sf /usr/bin/clang-18 /usr/local/bin/clang \
     && ln -sf /usr/lib/llvm-18/bin/wasm-ld /usr/local/bin/wasm-ld || true
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-ENV PATH="/root/.cargo/bin:${PATH}"
-ENV LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
-
 WORKDIR /src
 COPY . .
-RUN cargo build --release
+# o compilador é escrito EM LEX: sai da semente (LLVM IR) via clang, sem Rust.
+RUN ./selfhost/build-seed.sh
 # binário estático do servidor (roda em qualquer linux-x64, inclusive scratch)
-RUN ./target/release/lex registry-site/server.lex --target linux-x64 -o /registry
+RUN ./bin/lex build registry-site/server.lex --target linux-x64 -o /registry
 
 # --- estágio 2: runtime mínimo ---------------------------------------------
 FROM scratch

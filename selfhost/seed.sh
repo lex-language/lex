@@ -12,12 +12,12 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-RUSTLEX=./target/release/lex
+SEEDLEX=./bin/lex
 STAGE0=/tmp/lex-stage0
 STAGE1=/tmp/lex-stage1
 
 echo "==> 1. Rust compila o lex unificado -> stage0"
-$RUSTLEX selfhost/lexcli.lex -o "$STAGE0" | tail -1
+$SEEDLEX selfhost/lexcli.lex -o "$STAGE0" | tail -1
 
 echo
 echo "==> 2. o stage0 (em lex) faz o fluxo, SEM Rust:"

@@ -47,7 +47,7 @@
         "lex.server.path": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Caminho do binário do compilador `lex` usado como Language Server (`lex lsp`). Se vazio, a extensão procura `target/release/lex` e depois `target/debug/lex` na raiz do workspace. **Não** usa o `lex` do PATH por padrão (em sistemas Unix `/usr/bin/lex` costuma ser o flex)."
+          "markdownDescription": "Caminho do binário do compilador `lex` usado como Language Server (`lex lsp`). Se vazio, a extensão procura `bin/lex` na raiz do workspace (gerado por `./selfhost/build-seed.sh`). **Não** usa o `lex` do PATH por padrão (em sistemas Unix `/usr/bin/lex` costuma ser o flex)."
         },
         "lex.trace.server": {
           "type": "string",

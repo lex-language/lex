@@ -11,7 +11,7 @@
 # stage2: lexc1 (self-hosted) compila lexc.lex                 -> lexc2 (+ lexc2.ll)
 # prova : lexc1.ll == lexc2.ll  (o compilador-em-lex é estável compilando a si mesmo)
 set -e
-LEX=${LEX:-./target/release/lex}
+LEX=${LEX:-./bin/lex}
 ENTRY=selfhost/lexc.lex
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

@@ -378,7 +378,7 @@ fn typeArgsOf(ty: string): string[] {
 // tipos que ocupam a célula como INTEIRO (p/ decidir fptosi/sitofp nas bordas).
 fn isIntLike(ty: string): bool {
     return strEq(ty, "i64") || strEq(ty, "i32") || strEq(ty, "i16") || strEq(ty, "i8")
-        || strEq(ty, "bool");
+    || strEq(ty, "bool");
 }
 // f32 é promovido a f64 nos cálculos/saída (o modelo do runtime só tem double).
 fn isFloatTy(ty: string): bool {

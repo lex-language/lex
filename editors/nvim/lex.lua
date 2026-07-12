@@ -11,12 +11,12 @@
 
 local M = {}
 
--- Sobe da pasta do arquivo procurando target/release/lex e depois
--- target/debug/lex. NÃO cai pro `lex` do PATH: em Unix /usr/bin/lex é o flex.
+-- Sobe da pasta do arquivo procurando bin/lex (gerado por ./selfhost/build-seed.sh).
+-- NÃO cai pro `lex` do PATH: em Unix /usr/bin/lex é o flex.
 local function find_binary(start)
   local dir = vim.fn.fnamemodify(start, ":p:h")
   while dir and dir ~= "" do
-    for _, rel in ipairs({ "target/release/lex", "target/debug/lex" }) do
+    for _, rel in ipairs({ "bin/lex" }) do
       local cand = dir .. "/" .. rel
       if vim.fn.executable(cand) == 1 then
         return cand
@@ -54,7 +54,7 @@ function M.setup(opts)
       local bin = opts.cmd or find_binary(file)
       if not bin then
         vim.notify(
-          "lex: binário não encontrado. Rode `cargo build --release` ou "
+          "lex: binário não encontrado. Rode `./selfhost/build-seed.sh` ou "
             .. "passe { cmd = '/caminho/lex' } para require('lex').setup().",
           vim.log.levels.WARN
         )

@@ -1,49 +1,53 @@
-name: CI
+# CI do lex — o compilador é escrito EM LEX (não há mais Rust no repo).
+#
+# O bootstrap parte da SEMENTE (`selfhost/lex-seed.ll.gz`, o LLVM IR do próprio
+# compilador no ponto-fixo): clang a transforma em `bin/lex`, e a partir daí o lex
+# recompila a si mesmo a partir do fonte. A única dependência é o clang/LLVM.
+name: ci
 
 on:
   push:
-    branches: [main]
   pull_request:
 
-env:
-  # llvm-sys (via inkwell) precisa do LLVM 18; no Linux ele vem dos pacotes do
-  # sistema. Esta env var sobrepõe o padrão de macOS do .cargo/config.toml.
-  LLVM_SYS_180_PREFIX: /usr/lib/llvm-18
-  CARGO_TERM_COLOR: always
-
 jobs:
-  build-test:
-    runs-on: ubuntu-24.04
+  build:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Instalar LLVM 18, clang e libs do linker
+      - name: instala o LLVM 18 (clang, wasm-ld, llvm-lib)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            llvm-18 llvm-18-dev llvm-18-tools clang-18 lld-18 libpolly-18-dev \
-            libzstd-dev zlib1g-dev libffi-dev libxml2-dev libedit-dev libncurses-dev
-          # o lex chama `clang`/`wasm-ld` puros no link nativo/wasm
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo add-apt-repository -y "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-18 main"
+          sudo apt-get update -qq
+          sudo apt-get install -y clang-18 lld-18
           sudo ln -sf /usr/bin/clang-18 /usr/local/bin/clang
-          sudo ln -sf /usr/lib/llvm-18/bin/wasm-ld /usr/local/bin/wasm-ld || true
+          sudo ln -sf /usr/bin/wasm-ld-18 /usr/local/bin/wasm-ld
 
-      - name: Componente clippy
-        run: rustup component add clippy
+      # Constrói o lex a partir da semente E valida o ponto-fixo (o compilador
+      # reproduz a si mesmo byte a byte). Se a semente estiver dessincronizada do
+      # fonte, isto falha — rode ./selfhost/regen-seed.sh e commite.
+      - name: bootstrap a partir da semente
+        run: ./selfhost/build-seed.sh
 
-      - uses: Swatinem/rust-cache@v2
+      - name: suíte de testes
+        run: for f in tests/*.test.lex; do ./bin/lex test "$f" || exit 1; done
 
-      - name: Build
-        run: cargo build --locked
+      - name: portão de paridade (linguagem completa, e2e)
+        run: ./bin/lex test selfhost/parity.test.lex
 
-      - name: Clippy (sem warnings)
-        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: check (tipos/sintaxe) sem falso-positivo no próprio repo
+        run: |
+          for f in selfhost/*.lex std/*.lex examples/*.lex; do
+            out=$(./bin/lex check "$f")
+            [ "$out" = "[]" ] || { echo "diagnóstico inesperado em $f: $out"; exit 1; }
+          done
 
-      - name: Testes (unit + e2e)
-        run: cargo test --locked
+      - name: fmt --check
+        run: ./bin/lex fmt --check selfhost/*.lex std/*.lex
 
-      - name: Runner de testes do lex (em .test.lex)
-        run: ./target/debug/lex test examples/tests
+      - name: exemplo.lex compila e roda
+        run: ./bin/lex run examples/exemplo.lex
 
-      - name: Checa o registry-site (parser + sema dos módulos lex)
-        run: ./target/debug/lex check registry-site/server.lex
+      - name: alvo wasm32
+        run: ./bin/lex build examples/exemplo.lex --target wasm -o /tmp/exemplo.wasm

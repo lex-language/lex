@@ -22,3 +22,8 @@
 # dados do registry-site (pacotes publicados em runtime) e o binário compilado
 /registry-site/data
 /registry
+
+# binário do compilador (gerado por ./selfhost/build-seed.sh)
+bin/
+
+.DS_Store
