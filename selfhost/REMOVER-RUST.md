@@ -37,13 +37,26 @@ Esforço grande, várias sessões. Cada item mantém ponto-fixo + 14/14 testes v
   via flag no runtime (`__lex_set_err`/`__lex_has_err`/`__lex_take_err`): `fail E`
   seta+sai; `try f()` propaga (sai da função se setado); `f() catch H` limpa+usa H.
   `defer S` empilha em `curDefers` e roda em ordem LIFO antes de cada `ret`.
-- [ ] parser/codegen: `spawn`, `async`/`await` + `Channel`/`Future` (threads)
-- [ ] codegen: builtins de ponteiro `alloc`/`free`/`poke*`/`peek*` (memória crua)
-- [ ] parser/codegen: `match` como expressão com guarda (`x if c`) e faixa (`a..b`)
-- [ ] codegen: literais `json`/`Map`, `f32`, e demais métodos
+- [x] parser/codegen: **`spawn`/`async`/`await` + `Channel`** — thunk por função-alvo,
+  args num struct do heap, `pthread_create`/`join`/`detach`; `__lex_chan_*`.
+- [x] codegen: **builtins de ponteiro** `alloc`(→`__lex_heap_alloc`)/`free`/`poke*`/`peek*`.
+- [x] parser/codegen: **`match` como expressão** com literais (int/string), binding,
+  guarda (`x if c`) e faixa (`a..b`). A tag só é lida se houver braço de classe.
+- [x] codegen: **literais `json`** (objeto + `jsonSet`/`jsonStringify`), **`Map`**
+  (`mapSet`/`mapGet`), **`f32`** (promovido a f64) e **bool** (`true`/`false`).
+- [x] codegen/sema: **métodos estáticos** (`Classe.metodo()`), **`min`/`max`**
+  polimórficos (via `select`), e **método de classe tem prioridade sobre builtin
+  de mesmo nome** (senão `Pilha.push` virava `__lex_arr_push` → SEGV).
+- [x] codegen/sema: **vtable** — dispatch dinâmico pela tag quando o método é
+  sobrescrito (polimorfismo). Estático quando não há override (bootstrap intacto).
+- [x] sema: **genéricos reificados** — `Pilha<string>.pop()` tipa `string` (o codegen
+  segue type-erased; a sema só precisa disso p/ imprimir/converter certo).
+- [x] **META ATINGIDA**: `bin/lex examples/exemplo.lex` compila e roda, com saída
+  **byte-idêntica** à do compilador Rust (tour completo da linguagem).
 - [ ] parser: ternário `c ? a : b` e optional-chaining `?.` (não usados no exemplo;
   o lexer nem tokeniza `?` ainda)
-- [ ] meta: `bin/lex examples/exemplo.lex` compila e roda
+- [ ] o que AINDA prende o Rust: **wasm/cross-compile** e o **check de tipos** de
+  verdade (o self-hostado só detecta variável indefinida). Ver Fases G/H.
 
 > Nota: o `runtime.c` continua **C** (compilado pelo clang) — "remover Rust" ≠
 > "remover C". Até o `lex` de produção embute `runtime.c` e usa clang como linker.

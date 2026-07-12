@@ -267,8 +267,10 @@ class ClassDecl {
     parent: string          // "" = sem extends
     fields: ClassField[]
     methods: Func[]         // métodos e constructor (Func com name="constructor")
+    typeParams: string[]    // <T, U> — p/ reificar o retorno (Pilha<string>.pop(): string)
     constructor(name: string, parent: string, fields: ClassField[], methods: Func[]) {
         this.name = name; this.parent = parent; this.fields = fields; this.methods = methods
+        this.typeParams = []
     }
 }
 // Programa = imports + enums + classes + funções + statements de topo
@@ -515,6 +517,18 @@ class Parser {
         return new Var("<?>", t.pos);
     }
 
+    // lê `<T, U>` de uma declaração e devolve os nomes (vazio se não houver).
+    parseTypeParams(): string[] {
+        let ps: string[] = [];
+        if (this.peekKind() != Tok.Lt) { return ps; }
+        this.advance();                                  // <
+        while (this.peekKind() != Tok.Gt && this.peekKind() != Tok.Eof) {
+            if (this.peekKind() == Tok.Comma) { this.advance(); continue; }
+            ps.push(this.advance().text);
+        }
+        this.expect(Tok.Gt);
+        return ps;
+    }
     // pula `<...>` de argumentos de tipo (ex.: `new Box<i64>(...)`), se houver.
     skipTypeArgs() {
         if (this.peekKind() != Tok.Lt) { return; }
@@ -962,7 +976,7 @@ class Parser {
     parseClass(): ClassDecl {
         this.advance();                              // class
         const name: string = this.advance().text;
-        this.skipTypeArgs();                         // <T> opcional
+        const tps: string[] = this.parseTypeParams();   // <T> opcional (guardado)
         let parent: string = "";
         if (this.peekKind() == Tok.Extends) { this.advance(); parent = this.advance().text; }
         if (this.peekKind() == Tok.Implements) {     // implements A, B — descartado
@@ -991,7 +1005,9 @@ class Parser {
         }
         this.expect(Tok.RBrace);
         this.eatSemi();
-        return new ClassDecl(name, parent, fields, methods);
+        const cd: ClassDecl = new ClassDecl(name, parent, fields, methods);
+        cd.typeParams = tps;
+        return cd;
     }
 
     // Programa completo: imports + enums + classes + funções. (type/interface/

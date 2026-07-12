@@ -23,7 +23,7 @@
 import { lexSrc, Tok } from "./lexer"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call,
-    ArrayLit, Field, MethodCall, Index, MapLit, Template, Match, MatchArm, Lambda,
+    ArrayLit, Field, MethodCall, Index, MapLit, StructLit, Template, Match, MatchArm, Lambda,
     TryExpr, CatchExpr, SpawnExpr, AwaitExpr,
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, FailStmt, DeferStmt, Func, Param, Program, Parser
@@ -750,6 +750,18 @@ class Codegen {
             if (m.args.len() >= 2) { to = this.genExpr(m.args[1]); }
             return this.emitCall("__lex_str_replace", `i64 ${bv}, i64 ${frm}, i64 ${to}`);
         }
+        // json: j.jsonSet(k, v) / j.jsonStringify()
+        if (strEq(m.method, "jsonSet")) {
+            let k: string = "0";
+            let v: string = "0";
+            if (m.args.len() >= 1) { k = this.genExpr(m.args[0]); }
+            if (m.args.len() >= 2) { v = this.boxArg(m.args[1], "any"); }
+            this.emit(`  call void @__lex_json_set(i64 ${bv}, i64 ${k}, i64 ${v})`);
+            return "0";
+        }
+        if (strEq(m.method, "jsonStringify")) {
+            return this.emitCall("__lex_json_stringify", concat("i64 ", bv));
+        }
         // Map: m.mapSet(k, v) / m.mapGet(k)
         if (strEq(m.method, "mapSet")) {
             let k: string = "0";
@@ -801,6 +813,20 @@ class Codegen {
             this.emit(`  call i64 @__lex_arr_push(i64 ${arr}, i64 ${v})`);
         }
         return arr;
+    }
+
+    // { chave: v, … } (chaves identificadoras) → literal `json`: cria o objeto e
+    // seta cada campo com o valor EMBRULHADO por tipo (string→jsonStr, i64→jsonNum…).
+    genStructLit(sl: StructLit): string {
+        const obj: string = this.emitCall("__lex_json_object", "");
+        let i: i64 = 0;
+        while (i < sl.fields.len()) {
+            const k: string = this.genStrLit(sl.fields[i]);
+            const v: string = this.boxArg(sl.vals[i], "any");
+            this.emit(`  call void @__lex_json_set(i64 ${obj}, i64 ${k}, i64 ${v})`);
+            i = i + 1;
+        }
+        return obj;
     }
 
     // {} / {"k": v, …} → map_new + map_set por entrada; devolve o ponteiro do map.
@@ -910,6 +936,7 @@ class Codegen {
             MethodCall m => this.genMethodCall(m),
             ArrayLit a => this.genArrayLit(a),
             MapLit ml => this.genMapLit(ml),
+            StructLit sl => this.genStructLit(sl),
             Index ix => this.genIndex(ix),
             NewExpr ne => this.genNew(ne),
             Field f => this.genField(f),
@@ -1563,6 +1590,8 @@ class Codegen {
         this.raw("declare i64 @__lex_json_as_float(i64)");
         this.raw("declare i64 @__lex_json_as_str(i64)");
         this.raw("declare i64 @__lex_json_stringify(i64)");
+        this.raw("declare i64 @__lex_json_object()");
+        this.raw("declare void @__lex_json_set(i64, i64, i64)");
         this.raw("declare i64 @__lex_gget(i64)");
         this.raw("declare i64 @__lex_gset(i64, i64)");
         this.raw("declare i64 @__lex_f_abs(i64)");

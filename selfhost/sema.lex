@@ -313,6 +313,31 @@ fn isFunctionType(ty: string): bool {
 fn exprVarName(e: Expr): string {
     return match (e) { Var v => v.name, _ => "" };
 }
+// args de tipo de um tipo genérico: "Pilha<string>" → ["string"]; "Map<K,V>" → ["K","V"].
+fn typeArgsOf(ty: string): string[] {
+    let r: string[] = [];
+    const n: i64 = len(ty);
+    let i: i64 = 0;
+    while (i < n && peek8(ty, i) != 60) { i = i + 1; }        // acha '<'
+    if (i >= n) { return r; }
+    i = i + 1;
+    let depth: i64 = 0;
+    let start: i64 = i;
+    while (i < n) {
+        const c: i64 = peek8(ty, i);
+        if (c == 60) { depth = depth + 1; }
+        else if (c == 62) {                                   // '>'
+            if (depth == 0) { r.push(substring(ty, start, i)); return r; }
+            depth = depth - 1;
+        }
+        else if (c == 44 && depth == 0) {                     // ','
+            r.push(substring(ty, start, i));
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return r;
+}
 // f32 é promovido a f64 nos cálculos/saída (o modelo do runtime só tem double).
 fn isFloatTy(ty: string): bool {
     return strEq(ty, "f64") || strEq(ty, "f32");
@@ -479,6 +504,7 @@ class Sema {
             CatchExpr c => this.typeOf(c.lhs, scope),   // x catch y tem o tipo de x
             SpawnExpr s => "i64",                       // handle de thread (Future)
             AwaitExpr a => "i64",                       // resultado da thread
+            StructLit sl => "any",                      // literal json
             _ => "?"
         };
     }
@@ -522,6 +548,24 @@ class Sema {
         return this.funcRet(c.name);
     }
 
+    // reifica o type param no tipo `rt`, usando os args concretos da base:
+    // reify("Pilha<string>", "T") → "string";  reify("Pilha<string>", "T[]") → "string[]".
+    // (O codegen é type-erased; isso serve só p/ a sema saber IMPRIMIR/converter certo.)
+    reify(bt: string, rt: string): string {
+        const di: i64 = this.classes.indexOfDecl(bt);
+        if (di < 0) { return rt; }
+        const tps: string[] = this.classes.decls[di].typeParams;
+        if (tps.len() == 0) { return rt; }
+        const targs: string[] = typeArgsOf(bt);
+        let i: i64 = 0;
+        while (i < tps.len() && i < targs.len()) {
+            if (strEq(rt, tps[i])) { return targs[i]; }
+            if (strEq(rt, concat(tps[i], "[]"))) { return concat(targs[i], "[]"); }
+            i = i + 1;
+        }
+        return rt;
+    }
+
     typeMethodCall(m: MethodCall, scope: Scope): string {
         // método ESTÁTICO: a base é o NOME de uma classe, não uma variável.
         const sbn: string = exprVarName(m.base);
@@ -529,14 +573,23 @@ class Sema {
             return this.methodRet(sbn, m.method);
         }
         const bt: string = this.typeOf(m.base, scope);
+        // método de CLASSE tem prioridade sobre os builtins de mesmo nome (uma
+        // classe Pilha<T> com `.pop()` não é o pop de array). Reifica o T no retorno.
+        if (isClassTy(bt) && this.classes.findInfo(bt) >= 0) {
+            const owner: string = this.classes.methodOwner(bt, m.method);
+            if (!strEq(owner, "")) { return this.reify(bt, this.methodRet(bt, m.method)); }
+        }
         if (strEq(m.method, "len")) { return "i64"; }
         if (strEq(m.method, "push")) { return "void"; }
         if (strEq(m.method, "pop")) { return elementTy(bt); }
         if (strEq(m.method, "charAt") || strEq(m.method, "substring")) { return "string"; }
         if (strEq(m.method, "join")) { return "string"; }   // string[].join(sep) → string
+        if (strEq(m.method, "jsonStringify")) { return "string"; }
+        if (strEq(m.method, "jsonSet") || strEq(m.method, "mapSet")) { return "void"; }
+        if (strEq(m.method, "mapGet")) { return elementTy(bt); }
         if (strEq(m.method, "trim") || strEq(m.method, "toLower") || strEq(m.method, "toUpper")
             || strEq(m.method, "replace")) { return "string"; }
-        if (isClassTy(bt)) { return this.methodRet(bt, m.method); }
+        if (isClassTy(bt)) { return this.reify(bt, this.methodRet(bt, m.method)); }
         return "?";
     }
 
