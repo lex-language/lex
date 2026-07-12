@@ -82,18 +82,20 @@ class ClassTable {
 
     // índice de uma classe na lista de decls (= sua tag), ou -1.
     indexOfDecl(name: string): i64 {
+        const nm: string = baseName(name);
         let i: i64 = 0;
         while (i < this.decls.len()) {
-            if (strEq(this.decls[i].name, name)) { return i; }
+            if (strEq(this.decls[i].name, nm)) { return i; }
             i = i + 1;
         }
         return -1;
     }
     // índice em `infos` de uma classe já construída, ou -1.
     findInfo(name: string): i64 {
+        const nm: string = baseName(name);
         let i: i64 = 0;
         while (i < this.infos.len()) {
-            if (strEq(this.infos[i].name, name)) { return i; }
+            if (strEq(this.infos[i].name, nm)) { return i; }
             i = i + 1;
         }
         return -1;
@@ -280,6 +282,17 @@ fn isFunctionType(ty: string): bool {
     }
     return false;
 }
+// nome-base de um tipo: tira os args genéricos ("Pilha<i64>" → "Pilha"). O type
+// erasure faz `Pilha<i64>` e `Pilha<string>` compartilharem a MESMA classe.
+fn baseName(ty: string): string {
+    let i: i64 = 0;
+    const n: i64 = len(ty);
+    while (i < n) {
+        if (peek8(ty, i) == 60) { return substring(ty, 0, i); }   // '<'
+        i = i + 1;
+    }
+    return ty;
+}
 fn isClassTy(ty: string): bool {
     if (isPrimTy(ty)) { return false; }
     if (isArrayTy(ty)) { return false; }
@@ -461,6 +474,14 @@ class Sema {
     }
 
     typeCall(c: Call, scope: Scope): string {
+        // min/max são polimórficos: o tipo é o dos operandos (i64 ou f64)
+        if (strEq(c.name, "min") || strEq(c.name, "max")) {
+            if (c.args.len() == 0) { return "i64"; }
+            const t0: string = this.typeOf(c.args[0], scope);
+            if (strEq(t0, "f64")) { return "f64"; }
+            if (c.args.len() > 1 && strEq(this.typeOf(c.args[1], scope), "f64")) { return "f64"; }
+            return t0;
+        }
         const bi: string = builtinFnRet(c.name);
         if (!strEq(bi, "")) { return bi; }
         return this.funcRet(c.name);

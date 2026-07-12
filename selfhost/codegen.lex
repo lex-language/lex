@@ -555,6 +555,32 @@ class Codegen {
         return "0";
     }
 
+    // min/max: polimórficos (int ou float). Compara no tipo certo e escolhe a
+    // CÉLULA original via `select` — assim o f64 volta com os bits intactos.
+    genMinMax(c: Call): string {
+        if (c.args.len() < 2) { return "0"; }
+        const lt: string = this.sema.typeOf(c.args[0], this.scope);
+        const rt: string = this.sema.typeOf(c.args[1], this.scope);
+        const a: string = this.genExpr(c.args[0]);
+        const b: string = this.genExpr(c.args[1]);
+        const wantMin: bool = strEq(c.name, "min");
+        const cb: string = this.newTmp();
+        if (strEq(lt, "f64") || strEq(rt, "f64")) {
+            const ad: string = this.toDouble(a, lt);
+            const bd: string = this.toDouble(b, rt);
+            let pred: string = "ogt";
+            if (wantMin) { pred = "olt"; }
+            this.emit(`  ${cb} = fcmp ${pred} double ${ad}, ${bd}`);
+        } else {
+            let pred: string = "sgt";
+            if (wantMin) { pred = "slt"; }
+            this.emit(`  ${cb} = icmp ${pred} i64 ${a}, ${b}`);
+        }
+        const r: string = this.newTmp();
+        this.emit(`  ${r} = select i1 ${cb}, i64 ${a}, i64 ${b}`);
+        return r;
+    }
+
     genCall(c: Call): string {
         // chamada INDIRETA: c.name é uma variável de tipo função (arrow recebido)
         if (isFunctionType(this.scope.get(c.name))) {
@@ -574,6 +600,7 @@ class Codegen {
         }
         if (strEq(c.name, "len")) { return this.genLen(c); }
         if (strEq(c.name, "super")) { return this.genSuperCall(c); }
+        if (strEq(c.name, "min") || strEq(c.name, "max")) { return this.genMinMax(c); }
         if (idxOf(this.asyncNames, c.name) >= 0) { return this.spawnCall(c); }   // async: lança thread
         const rt: string = runtimeFn(c.name);
         if (!strEq(rt, "")) { return this.callRuntime(rt, c.args); }
@@ -586,8 +613,46 @@ class Codegen {
         if (strEq(varName(m.base), "Terminal")) {
             return this.genTerminalPrint(m.args);
         }
+        // método ESTÁTICO: `Classe.metodo(args)` — a base é o NOME de uma classe,
+        // não uma variável (scope.get devolve "" p/ ela). O parser descarta o
+        // `static`, então o método tem o param `this` — passamos 0 (não é usado).
+        const bn: string = varName(m.base);
+        if (!strEq(bn, "") && strEq(this.scope.get(bn), "?")
+            && this.sema.classes.findInfo(bn) >= 0) {
+            const sowner: string = this.sema.classes.methodOwner(bn, m.method);
+            if (!strEq(sowner, "")) {
+                const sptypes: string[] = this.sema.methodParamTypes(bn, m.method);
+                let sargs: string = "i64 0";
+                let si: i64 = 0;
+                for (const a of m.args) {
+                    let pt: string = "";
+                    if (si < sptypes.len()) { pt = sptypes[si]; }
+                    sargs = concat(sargs, concat(", i64 ", this.boxArg(a, pt)));
+                    si = si + 1;
+                }
+                return this.emitCall(concat(sowner, concat(".", m.method)), sargs);
+            }
+        }
         const baseTy: string = this.sema.typeOf(m.base, this.scope);
         const bv: string = this.genExpr(m.base);
+        // Método de CLASSE tem prioridade sobre os builtins de mesmo nome: uma
+        // classe do usuário com `.push`/`.send`/`.free` (ex.: Pilha<T>) não pode
+        // virar __lex_arr_push. Dispatch estático @Dono.metodo(this, args…).
+        if (isClassTy(baseTy) && this.sema.classes.findInfo(baseTy) >= 0) {
+            const owner: string = this.sema.classes.methodOwner(baseTy, m.method);
+            if (!strEq(owner, "")) {
+                const ptypes: string[] = this.sema.methodParamTypes(baseTy, m.method);
+                let argStr: string = concat("i64 ", bv);
+                let i: i64 = 0;
+                for (const a of m.args) {
+                    let pt: string = "";
+                    if (i < ptypes.len()) { pt = ptypes[i]; }
+                    argStr = concat(argStr, concat(", i64 ", this.boxArg(a, pt)));
+                    i = i + 1;
+                }
+                return this.emitCall(concat(owner, concat(".", m.method)), argStr);
+            }
+        }
         if (strEq(m.method, "len")) {
             let rfn: string = "__lex_strlen";
             if (isArrayTy(baseTy)) { rfn = "__lex_arr_len"; }
@@ -647,22 +712,6 @@ class Codegen {
             let o: string = "0";
             if (m.args.len() >= 1) { o = this.genExpr(m.args[0]); }
             return this.emitCall(pe, `i64 ${bv}, i64 ${o}`);
-        }
-        // método de classe: dispatch estático @Dono.metodo(this, args…)
-        if (isClassTy(baseTy) && this.sema.classes.findInfo(baseTy) >= 0) {
-            const owner: string = this.sema.classes.methodOwner(baseTy, m.method);
-            if (!strEq(owner, "")) {
-                const ptypes: string[] = this.sema.methodParamTypes(baseTy, m.method);
-                let argStr: string = concat("i64 ", bv);
-                let i: i64 = 0;
-                for (const a of m.args) {
-                    let pt: string = "";
-                    if (i < ptypes.len()) { pt = ptypes[i]; }
-                    argStr = concat(argStr, concat(", i64 ", this.boxArg(a, pt)));
-                    i = i + 1;
-                }
-                return this.emitCall(concat(owner, concat(".", m.method)), argStr);
-            }
         }
         return "0";
     }
