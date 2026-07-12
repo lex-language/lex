@@ -12,7 +12,7 @@
 //   lex version                           versão
 //
 // (wasm/cross-compile e o fetch de rede do pkg ainda faltam — ver REMOVER-RUST.md.)
-import { compileFileToIR, findRuntime } from "./modloader"
+import { compileFileToIR, compileFileToIRT, findRuntime } from "./modloader"
 import { formatSource } from "./fmt"
 import { runTestFile } from "./testrunner"
 import { runCheck } from "./checker"
@@ -48,6 +48,43 @@ fn buildFileT(file: string, out: string, flags: string): i64 {
 }
 fn buildFile(file: string, out: string): i64 { return buildFileT(file, out, ""); }
 
+// clang/wasm-ld do LLVM 18 — o clang do sistema costuma não ter o backend wasm.
+// Tenta os prefixos usuais do brew e cai no PATH.
+fn findLlvmTool(name: string): string {
+    const a: string = concat("/opt/homebrew/opt/llvm@18/bin/", name);
+    if (exists(a)) { return a; }
+    const b: string = concat("/usr/local/opt/llvm@18/bin/", name);
+    if (exists(b)) { return b; }
+    return name;
+}
+
+// --target wasm: emite um módulo WebAssembly.
+//   .lex → .ll (triple wasm32, ABI ptr-aware) → clang -c → objeto
+//   runtime.c → objeto wasm32 FREESTANDING (sem libc/sysroot: a runtime traz
+//               printf/mem*/str* próprios; o único import é `lex.write` do host)
+//   wasm-ld linka os dois.
+fn buildWasm(file: string, out: string): i64 {
+    const ir: string = compileFileToIRT(file, 1);
+    const ll: string = concat(out, ".ll");
+    writeFile(ll, ir);
+    const clang: string = findLlvmTool("clang");
+    const wld: string = findLlvmTool("wasm-ld");
+    const obj: string = concat(out, ".o");
+    const rtobj: string = concat(out, ".rt.o");
+
+    // -fno-builtin é ESSENCIAL: sem ele o clang reescreve printf("%s\n", x) em
+    // puts(x), e a runtime freestanding não tem puts → vira um import `env.puts`
+    // que nenhum host fornece.
+    let rc: i64 = system(`${clang} --target=wasm32 -O2 -fno-builtin -Wno-override-module -c ${ll} -o ${obj}`);
+    if (rc != 0) { Terminal.log(`erro: clang falhou no .ll wasm (rc=${rc})`); return 1; }
+    rc = system(`${clang} --target=wasm32 -O2 -ffreestanding -fno-builtin -nostdlib -c ${findRuntime()} -o ${rtobj}`);
+    if (rc != 0) { Terminal.log(`erro: clang falhou na runtime wasm (rc=${rc})`); return 1; }
+    rc = system(`${wld} ${obj} ${rtobj} --no-entry --export-all --allow-undefined --export-memory -o ${out}`);
+    if (rc != 0) { Terminal.log(`erro: wasm-ld falhou (rc=${rc})`); return 1; }
+    system(`rm -f ${obj} ${rtobj}`);
+    return 0;
+}
+
 // recompila ao mudar o arquivo (poll de conteúdo a cada 1s — não há builtin de
 // mtime/sleep, então usa system("sleep 1")). Roda até Ctrl-C.
 fn watchLoop(file: string, out: string): i64 {
@@ -69,17 +106,31 @@ fn watchLoop(file: string, out: string): i64 {
 // implícita `lex <arquivo.lex> …`, compatível com o invocar do Rust/bootstrap).
 fn cmdBuild(av: string[], start: i64): i64 {
     let file: string = "";
-    let out: string = "a.out";
+    let out: string = "";
     let watch: bool = false;
     let flags: string = "";
+    let wasm: bool = false;
     let i: i64 = start;
     while (i < av.len()) {
         if (strEq(av[i], "-o") && i + 1 < av.len()) { out = av[i + 1]; i = i + 2; }
         else if (strEq(av[i], "--watch")) { watch = true; i = i + 1; }
-        else if (strEq(av[i], "--target") && i + 1 < av.len()) { flags = targetFlags(av[i + 1]); i = i + 2; }
+        else if (strEq(av[i], "--target") && i + 1 < av.len()) {
+            const t: string = av[i + 1];
+            if (strEq(t, "wasm") || strEq(t, "wasm32")) { wasm = true; }
+            else { flags = targetFlags(t); }
+            i = i + 2;
+        }
         else { file = av[i]; i = i + 1; }
     }
-    if (strEq(file, "")) { Terminal.log("uso: lex build <arquivo.lex> [-o saida] [--target t] [--watch]"); return 1; }
+    if (strEq(file, "")) { Terminal.log("uso: lex build <arquivo.lex> [-o saida] [--target native|wasm|macos-x64|macos-arm64] [--watch]"); return 1; }
+    if (strEq(out, "")) {
+        if (wasm) { out = "a.wasm"; } else { out = "a.out"; }
+    }
+    if (wasm) {
+        if (buildWasm(file, out) != 0) { return 1; }
+        Terminal.log(`ok (wasm): ${file} -> ${out}`);
+        return 0;
+    }
     if (buildFileT(file, out, flags) != 0) { return 1; }
     Terminal.log(`ok: ${file} -> ${out}`);
     if (watch) { return watchLoop(file, out); }

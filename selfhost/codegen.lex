@@ -643,7 +643,7 @@ class Codegen {
     printfStr(cell: string) {
         const p: string = this.newTmp();
         this.emit(`  ${p} = inttoptr i64 ${cell} to ptr`);
-        this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, ptr ${p})`);
+        this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, ptr ${p}) nobuiltin`);
     }
 
     // emite `%t = call i64 @rfn(argStr)` e devolve o temporário.
@@ -812,7 +812,7 @@ class Codegen {
         if (strEq(c.name, "print")) {
             let v: string = "0";
             if (c.args.len() >= 1) { v = this.genExpr(c.args[0]); }
-            this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_int, i64 ${v})`);
+            this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_int, i64 ${v}) nobuiltin`);
             return "0";
         }
         if (strEq(c.name, "len")) { return this.genLen(c); }

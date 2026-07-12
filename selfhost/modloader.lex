@@ -7,7 +7,7 @@
 // a pendência da F6.2-B). O `main` é o do arquivo de entrada (script-mode).
 import { lexSrc } from "./lexer"
 import { Program, ClassDecl, EnumDecl, Func, Stmt, Import, Parser } from "./parser"
-import { compileProgramToIR } from "./codegen"
+import { compileProgramToIR, compileProgramToIRT } from "./codegen"
 
 // diretório de um caminho ("a/b/c.lex" → "a/b"; "c.lex" → "").
 fn dirOf(path: string): string {
@@ -119,6 +119,8 @@ fn loadProgram(entry: string): Program {
 }
 
 // caminho de entrada → texto do LLVM IR (resolve imports + codegen).
-fn compileFileToIR(entry: string): string {
-    return compileProgramToIR(loadProgram(entry));
+// `target`: 0 = nativo, 1 = wasm32.
+fn compileFileToIRT(entry: string, target: i64): string {
+    return compileProgramToIRT(loadProgram(entry), target);
 }
+fn compileFileToIR(entry: string): string { return compileFileToIRT(entry, 0); }
