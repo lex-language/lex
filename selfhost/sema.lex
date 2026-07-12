@@ -190,6 +190,32 @@ class ClassTable {
         for (const m of ci.methods) { if (strEq(m.name, method)) { return m.owner; } }
         return "";
     }
+    // classe que DECLARA o campo static `field` (subindo a cadeia de pais), ou "".
+    // `Sub.count` e `Counter.count` têm de cair no MESMO slot — por isso o dono.
+    staticOwner(cls: string, field: string): string {
+        let cur: string = baseName(cls);
+        let guard: i64 = 0;
+        while (!strEq(cur, "") && guard < 64) {
+            const di: i64 = this.indexOfDecl(cur);
+            if (di < 0) { return ""; }
+            for (const sf of this.decls[di].statics) {
+                if (strEq(sf.name, field)) { return cur; }
+            }
+            cur = this.decls[di].parent;
+            guard = guard + 1;
+        }
+        return "";
+    }
+    // tipo declarado de um campo static, ou "?".
+    staticType(cls: string, field: string): string {
+        const own: string = this.staticOwner(cls, field);
+        if (strEq(own, "")) { return "?"; }
+        const di: i64 = this.indexOfDecl(own);
+        for (const sf of this.decls[di].statics) {
+            if (strEq(sf.name, field)) { return sf.ty; }
+        }
+        return "?";
+    }
     // `cls` é `base` ou descende dele?
     isSubclassOf(cls: string, base: string): bool {
         const want: string = baseName(base);
@@ -349,6 +375,11 @@ fn typeArgsOf(ty: string): string[] {
     }
     return r;
 }
+// tipos que ocupam a célula como INTEIRO (p/ decidir fptosi/sitofp nas bordas).
+fn isIntLike(ty: string): bool {
+    return strEq(ty, "i64") || strEq(ty, "i32") || strEq(ty, "i16") || strEq(ty, "i8")
+        || strEq(ty, "bool");
+}
 // f32 é promovido a f64 nos cálculos/saída (o modelo do runtime só tem double).
 fn isFloatTy(ty: string): bool {
     return strEq(ty, "f64") || strEq(ty, "f32");
@@ -390,7 +421,8 @@ fn builtinFnRet(name: string): string {
     // empacote DE NOVO (o ponteiro viraria um número).
     if (strEq(name, "jsonNum") || strEq(name, "jsonStr") || strEq(name, "jsonBool")
         || strEq(name, "jsonFloat") || strEq(name, "jsonObject")
-        || strEq(name, "jsonArray")) { return "any"; }
+        || strEq(name, "jsonArray") || strEq(name, "jsonParse")
+        || strEq(name, "jsonGet") || strEq(name, "jsonAt")) { return "any"; }
     if (strEq(name, "fabs")) { return "f64"; }
     if (strEq(name, "sqrt") || strEq(name, "pow") || strEq(name, "floor")
         || strEq(name, "ceil") || strEq(name, "round") || strEq(name, "sin")
@@ -666,6 +698,7 @@ class Sema {
         if (isArrayTy(bt)) { return elementTy(bt); }
         if (isMapTy(bt)) { return mapValueTy(bt); }
         if (strEq(bt, "string")) { return "string"; }    // char como string de 1 byte
+        if (strEq(bt, "any") || strEq(bt, "json")) { return "any"; }   // j["k"] / j[0]
         return "?";
     }
 

@@ -178,7 +178,9 @@ describe("parser de módulo (F6.1)", () => {
 describe("parser: arrow functions (Fase A)", () => {
         test("arrow içada p/ __lambda_N e referenciada como (lambda …)", () => {
                 expect(parseModuleStr("fn main(): i64 { return apply(() => 42) }"))
-                .toBe("(program (fn main () i64 (do (return (call apply (lambda __lambda_0))))) (fn __lambda_0 () i64 (do (return 42))))");
+                // arrow SEM anotação de retorno: o tipo é DESCONHECIDO (""), inferido do
+                // contexto — não "i64" (assumir i64 truncava um `() => 2.5 * 2.0`).
+                .toBe("(program (fn main () i64 (do (return (call apply (lambda __lambda_0))))) (fn __lambda_0 ()  (do (return 42))))");
         });
 
         test("tipo de função na anotação + arrow com parâmetro", () => {

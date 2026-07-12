@@ -820,7 +820,7 @@ long long __lex_f_pow(long long b, long long e) {
 // expomos um punhado de células i64 globais e persistentes — escape hatch para
 // singletons (ex.: os contadores da biblioteca de testes BDD). NÃO é seguro
 // entre threads (são compartilhadas, sem lock); use em código single-thread.
-#define LEX_NGLOBAL 64
+#define LEX_NGLOBAL 256
 static long long lex_global_slots[LEX_NGLOBAL];
 long long __lex_gget(long long i) {
     return (i >= 0 && i < LEX_NGLOBAL) ? lex_global_slots[i] : 0;

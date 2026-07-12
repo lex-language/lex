@@ -106,7 +106,8 @@ class Template extends Expr {
     constructor(parts: Expr[]) { this.parts = parts }
 }
 // um braço de `match`: padrão `Tipo bind` (bind="" e pat="_" → curinga) e corpo
-// kind: 0=tag de classe, 1=literal int, 2=literal string, 3=faixa a..b, 4=curinga/binding
+// kind: 0=tag de classe, 1=literal int, 2=literal string, 3=faixa a..b,
+//       4=curinga/binding, 5=variante de enum (`Color.Red`), 6=destructuring `{x, y}`
 class MatchArm {
     kind: i64
     pat: string         // nome da classe (0) | valor string (2) | nome do binding (4)
@@ -246,9 +247,13 @@ class Func {
     fallible: bool
     body: Stmt[]
     isAsync: bool       // `async function`: chamá-la lança uma thread (Future)
+    captures: string[]  // arrow: variáveis livres capturadas POR VALOR (env)
+    ownerClass: string  // arrow escrita DENTRO de um método: a classe (tipo do `this`)
     constructor(name: string, params: Param[], ret: string, fallible: bool, body: Stmt[]) {
         this.name = name; this.params = params; this.ret = ret
         this.fallible = fallible; this.body = body; this.isAsync = false
+        this.captures = []
+        this.ownerClass = ""
     }
 }
 
@@ -274,9 +279,13 @@ class ClassDecl {
     fields: ClassField[]
     methods: Func[]         // métodos e constructor (Func com name="constructor")
     typeParams: string[]    // <T, U> — p/ reificar o retorno (Pilha<string>.pop(): string)
+    statics: ClassField[]   // campos `static` — vivem num SLOT GLOBAL, não no objeto
+    staticInits: Expr[]     // inicializador de cada static (IntLit(0) se não houver)
     constructor(name: string, parent: string, fields: ClassField[], methods: Func[]) {
         this.name = name; this.parent = parent; this.fields = fields; this.methods = methods
         this.typeParams = []
+        this.statics = []
+        this.staticInits = []
     }
 }
 // Programa = imports + enums + classes + funções + statements de topo
@@ -327,6 +336,7 @@ fn tokName(k: Tok): string {
 
 // ── o parser ────────────────────────────────────────────────────────────────
 class Parser {
+    curClassName: string    // classe sendo parseada (p/ tipar o `this` capturado)
     toks: Token[]
     pos: i64
     lambdas: Func[]    // arrow functions içadas (anexadas a `funcs` em parseModule)
@@ -334,6 +344,7 @@ class Parser {
     errs: string[]     // erros de sintaxe acumulados (mensagem)
     errPos: i64[]      // posição (offset de byte) de cada erro
     constructor(toks: Token[]) {
+        this.curClassName = ""
         this.toks = toks
         this.pos = 0
         this.lambdas = []
@@ -587,16 +598,32 @@ class Parser {
         let lo: i64 = 0;
         let hi: i64 = 0;
         const k: Tok = this.peekKind();
-        if (k == Tok.Str) {                          // "lit" => ...
+        if (k == Tok.LBrace) {                       // `{x, y} =>` — destructuring
+            this.advance();
+            kind = 6;
+            let first: bool = true;
+            while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
+                if (this.peekKind() == Tok.Comma) { this.advance(); continue; }
+                if (!first) { pat = concat(pat, ","); }
+                pat = concat(pat, this.advance().text);
+                first = false;
+            }
+            this.expect(Tok.RBrace);
+        }
+        else if (k == Tok.Str) {                     // "lit" => ...
             kind = 2; pat = this.advance().text;
         } else if (k == Tok.Int) {                   // 42 =>  ou  10..50 =>
             lo = this.advance().ival;
             if (this.peekKind() == Tok.DotDot) {
                 this.advance(); hi = this.advance().ival; kind = 3;
             } else { kind = 1; }
-        } else {                                     // Ident: classe, binding ou "_"
+        } else {                                     // Ident: enum, classe, binding ou "_"
             const name: string = this.advance().text;
             if (strEq(name, "_")) { kind = 4; bind = ""; }
+            else if (this.peekKind() == Tok.Dot) {   // `Color.Red =>` — variante de enum
+                this.advance();
+                kind = 5; pat = name; bind = this.advance().text;
+            }
             else if (this.peekKind() == Tok.Ident) { kind = 0; pat = name; bind = this.advance().text; }
             else { kind = 4; bind = name; }          // binding (casa tudo, liga `name`)
         }
@@ -690,7 +717,10 @@ class Parser {
             if (this.peekKind() == Tok.Comma) { this.advance(); }
         }
         this.expect(Tok.RParen);
-        let ret: string = "i64";                       // arrow sem anotação assume i64
+        // arrow SEM anotação: retorno DESCONHECIDO (""), inferido do contexto — não
+        // "i64". Assumir i64 fazia o `return` coagir um f64 com fptosi e TRUNCAR:
+        // `() => 2.5 * 2.0` virava o inteiro 5, lido depois como bits de double.
+        let ret: string = "";
         if (this.peekKind() == Tok.Colon) { this.advance(); ret = this.parseTypeStr(); }
         this.expect(Tok.FatArrow);
         let body: Stmt[] = [];
@@ -698,7 +728,9 @@ class Parser {
         else { body = [new ReturnStmt(true, this.parseExpr())]; }    // corpo-expr → return
         const name: string = concat("__lambda_", str(this.lambdaN));
         this.lambdaN = this.lambdaN + 1;
-        this.lambdas.push(new Func(name, params, ret, false, body));
+        const lf: Func = new Func(name, params, ret, false, body);
+        lf.ownerClass = this.curClassName;      // arrow num método: tipo do `this`
+        this.lambdas.push(lf);
         return new Lambda(name);
     }
 
@@ -1000,13 +1032,19 @@ class Parser {
             this.advance(); this.advance();
             while (this.peekKind() == Tok.Comma) { this.advance(); this.advance(); }
         }
+        this.curClassName = name;
         this.expect(Tok.LBrace);
         let fields: ClassField[] = [];
         let methods: Func[] = [];
+        let statics: ClassField[] = [];
+        let sinits: Expr[] = [];
         while (this.peekKind() != Tok.RBrace && this.peekKind() != Tok.Eof) {
             if (this.peekKind() == Tok.Semicolon) { this.advance(); continue; }
-            // modificadores private/static — descartados na forma textual
+            // `private` é só visibilidade (descartado); `static` MUDA o layout:
+            // o campo não mora no objeto, e sim num slot global da classe.
+            let isStatic: bool = false;
             while (this.peekKind() == Tok.Private || this.peekKind() == Tok.Static) {
+                if (this.peekKind() == Tok.Static) { isStatic = true; }
                 this.advance();
             }
             const mname: string = this.advance().text;
@@ -1015,15 +1053,20 @@ class Parser {
             } else {                                  // campo: `nome: tipo [= init]`
                 this.expect(Tok.Colon);
                 const ty: string = this.parseTypeStr();
-                if (this.peekKind() == Tok.Eq) { this.advance(); this.parseExpr(); }  // static init
+                let init: Expr = new IntLit(0);
+                if (this.peekKind() == Tok.Eq) { this.advance(); init = this.parseExpr(); }
                 this.eatSemi();
-                fields.push(new ClassField(mname, ty));
+                if (isStatic) { statics.push(new ClassField(mname, ty)); sinits.push(init); }
+                else { fields.push(new ClassField(mname, ty)); }
             }
         }
         this.expect(Tok.RBrace);
         this.eatSemi();
+        this.curClassName = "";
         const cd: ClassDecl = new ClassDecl(name, parent, fields, methods);
         cd.typeParams = tps;
+        cd.statics = statics;
+        cd.staticInits = sinits;
         return cd;
     }
 

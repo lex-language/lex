@@ -28,7 +28,7 @@ import {
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, FailStmt, DeferStmt, Func, Param, Program, Parser
 } from "./parser"
-import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, isFloatTy, baseName, elementTy, addUniq, idxOf, without } from "./sema"
+import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, isFloatTy, isIntLike, baseName, elementTy, addUniq, idxOf, without } from "./sema"
 
 fn boolLit(b: bool): string {
     if (b) { return "1"; }
@@ -92,6 +92,9 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "jsonNum")) { return "__lex_json_num"; }
     if (strEq(name, "jsonStr")) { return "__lex_json_str"; }
     if (strEq(name, "jsonFloat")) { return "__lex_json_float"; }
+    if (strEq(name, "jsonParse")) { return "__lex_json_parse"; }
+    if (strEq(name, "jsonGet")) { return "__lex_json_get"; }
+    if (strEq(name, "jsonAt")) { return "__lex_json_at"; }
     if (strEq(name, "jsonBool")) { return "__lex_json_bool"; }
     // slots globais + float (usados pelo harness de teste std/test.lex)
     if (strEq(name, "gget")) { return "__lex_gget"; }
@@ -168,6 +171,9 @@ fn rtAbi(sym: string): string {
     if (strEq(sym, "__lex_json_object")) { return "|p"; }
     if (strEq(sym, "__lex_json_array")) { return "|p"; }
     if (strEq(sym, "__lex_json_push")) { return "pp|v"; }
+    if (strEq(sym, "__lex_json_get")) { return "pp|p"; }
+    if (strEq(sym, "__lex_json_at")) { return "p.|p"; }
+    if (strEq(sym, "__lex_json_parse")) { return "p|p"; }
     if (strEq(sym, "__lex_json_set")) { return "ppp|v"; }
     if (strEq(sym, "__lex_json_eq")) { return "pp|."; }
     if (strEq(sym, "__lex_json_as_int")) { return "p|."; }
@@ -216,6 +222,7 @@ fn rtSymbols(): string[] {
         "__lex_peek8", "__lex_peek16", "__lex_peek32", "__lex_peek64",
         "__lex_json_num", "__lex_json_float", "__lex_json_bool", "__lex_json_str",
         "__lex_json_object", "__lex_json_array", "__lex_json_push",
+        "__lex_json_get", "__lex_json_at", "__lex_json_parse",
         "__lex_json_set", "__lex_json_eq", "__lex_json_as_int",
         "__lex_json_as_float", "__lex_json_as_str", "__lex_json_stringify",
         "__lex_fs_read", "__lex_fs_write", "__lex_fs_exists", "__lex_read_stdin",
@@ -280,6 +287,87 @@ fn directLetNames(stmts: Stmt[]): string[] {
     for (const s of stmts) { collectStmtLocal(s, names); }
     return names;
 }
+// ── variáveis livres de uma arrow (p/ a captura por valor) ──────────────────
+// Nomes USADOS no corpo, menos os que o próprio corpo liga (params e locais) e os
+// nomes de topo (funções/classes/enums). O que sobra é o que a closure captura.
+fn usedInExprs(xs: Expr[], out: string[]) { for (const e of xs) { usedInExpr(e, out); } }
+fn usedInExpr(e: Expr, out: string[]) {
+    match (e) {
+        Var v => addUniq(out, v.name),
+        Unary u => usedInExpr(u.operand, out),
+        Binary b => usedInBin(b, out),
+        Call c => usedInExprs(c.args, out),
+        MethodCall m => usedInMC(m, out),
+        Field f => usedInExpr(f.base, out),
+        Index ix => usedInIndex(ix, out),
+        NewExpr ne => usedInExprs(ne.args, out),
+        ArrayLit a => usedInExprs(a.items, out),
+        MapLit ml => usedInExprs(ml.vals, out),
+        StructLit sl => usedInExprs(sl.vals, out),
+        Template t => usedInExprs(t.parts, out),
+        Match mt => usedInMatch(mt, out),
+        TryExpr t => usedInExpr(t.call, out),
+        CatchExpr c => usedInCatch(c, out),
+        SpawnExpr sp => usedInExpr(sp.call, out),
+        AwaitExpr aw => usedInExpr(aw.inner, out),
+        Lambda lm => addUniq(out, lm.fnName),   // arrow ANINHADA: expandida depois
+        _ => 0
+    };
+}
+fn usedInBin(b: Binary, out: string[]): i64 { usedInExpr(b.lhs, out); usedInExpr(b.rhs, out); return 0; }
+fn usedInMC(m: MethodCall, out: string[]): i64 { usedInExpr(m.base, out); usedInExprs(m.args, out); return 0; }
+fn usedInIndex(ix: Index, out: string[]): i64 { usedInExpr(ix.base, out); usedInExpr(ix.index, out); return 0; }
+fn usedInCatch(c: CatchExpr, out: string[]): i64 { usedInExpr(c.lhs, out); usedInExpr(c.handler, out); return 0; }
+fn usedInMatch(mt: Match, out: string[]): i64 {
+    usedInExpr(mt.subject, out);
+    for (const a of mt.arms) {
+        if (a.hasGuard) { usedInExpr(a.guard, out); }
+        usedInExpr(a.body, out);
+    }
+    return 0;
+}
+fn usedInStmts(ss: Stmt[], out: string[]) { for (const s of ss) { usedInStmt(s, out); } }
+fn usedInStmt(s: Stmt, out: string[]) {
+    match (s) {
+        LetStmt l => usedInExpr(l.value, out),
+        AssignStmt a => usedInAssign(a, out),
+        ReturnStmt r => usedInExpr(r.value, out),
+        IfStmt f => usedInIf(f, out),
+        WhileStmt w => usedInWhile(w, out),
+        ForOfStmt fo => usedInForOf(fo, out),
+        ForStmt fr => usedInFor(fr, out),
+        ExprStmt e => usedInExpr(e.expr, out),
+        FailStmt fs => usedInExpr(fs.value, out),
+        DeferStmt d => usedInStmt(d.body, out),
+        _ => 0
+    };
+}
+fn usedInAssign(a: AssignStmt, out: string[]): i64 { usedInExpr(a.target, out); usedInExpr(a.value, out); return 0; }
+fn usedInIf(f: IfStmt, out: string[]): i64 { usedInExpr(f.cond, out); usedInStmts(f.thenB, out); usedInStmts(f.elseB, out); return 0; }
+fn usedInWhile(w: WhileStmt, out: string[]): i64 { usedInExpr(w.cond, out); usedInStmts(w.body, out); return 0; }
+fn usedInForOf(fo: ForOfStmt, out: string[]): i64 { usedInExpr(fo.iter, out); usedInStmts(fo.body, out); return 0; }
+fn usedInFor(fr: ForStmt, out: string[]): i64 {
+    if (fr.hasInit) { usedInStmt(fr.init, out); }
+    if (fr.hasCond) { usedInExpr(fr.cond, out); }
+    if (fr.hasUpdate) { usedInStmt(fr.update, out); }
+    usedInStmts(fr.body, out);
+    return 0;
+}
+
+// "x,y" → ["x", "y"]
+fn splitCommas(s: string): string[] {
+    let out: string[] = [];
+    let cur: string = "";
+    let i: i64 = 0;
+    const n: i64 = len(s);
+    while (i < n) {
+        if (peek8(s, i) == 44) { out.push(cur); cur = ""; }      // ','
+        else { cur = concat(cur, charAt(s, i)); }
+        i = i + 1;
+    }
+    if (!strEq(cur, "")) { out.push(cur); }
+    return out;
+}
 fn isLambdaName(name: string): bool {
     const pre: string = "__lambda_";
     if (len(name) < len(pre)) { return false; }
@@ -333,17 +421,27 @@ class Codegen {
     curLocals: string[]   // locais (alloca) da função atual — sombreiam globais
     curClass: string      // classe do método atual ("" fora de método) — p/ super(...)
     curDefers: Stmt[]     // statements adiados (defer) — emitidos antes de cada ret
-    thunkNames: string[]  // funções que precisam de thunk de thread (spawn/async)
+    thunkNames: string[]  // símbolos que precisam de thunk de thread (spawn/async)
+    thunkArity: i64[]     // aridade de cada thunk (paralelo a thunkNames)
     asyncNames: string[]  // funções `async` — chamá-las lança thread (vira Future)
     target: i64           // 0 = nativo, 1 = wasm32 (muda triple/datalayout)
+    curRet: string        // tipo de retorno da função atual (p/ coagir o `return`)
+    curCaptures: string[] // se a função atual é uma arrow: nomes lidos do env
+    lambdaFuncs: Func[]   // as arrows içadas (p/ achar as capturas de cada uma)
+    staticClasses: ClassDecl[]  // classes com campos static (inicializados no main)
 
     constructor(sema: Sema) {
         this.outParts = []
         this.curClass = ""
         this.curDefers = []
         this.thunkNames = []
+        this.thunkArity = []
         this.asyncNames = []
         this.target = 0
+        this.curRet = ""
+        this.curCaptures = []
+        this.lambdaFuncs = []
+        this.staticClasses = []
         this.tmp = 0
         this.lbl = 0
         this.term = false
@@ -438,7 +536,23 @@ class Codegen {
         if (n > 0) { this.bindNames.pop(); this.bindAddrs.pop(); }
     }
 
+    // slot de uma captura no env da closure (1.. ; slot 0 = ponteiro da função), ou -1
+    captureSlot(name: string): i64 {
+        const i: i64 = idxOf(this.curCaptures, name);
+        if (i < 0) { return -1; }
+        return i + 1;
+    }
     genLoad(name: string): string {
+        const cs: i64 = this.captureSlot(name);
+        if (cs >= 0) {                                  // variável capturada: lê do env
+            const p: string = this.newTmp();
+            this.emit(`  ${p} = inttoptr i64 %__env to ptr`);
+            const ep: string = this.newTmp();
+            this.emit(`  ${ep} = getelementptr i64, ptr ${p}, i64 ${cs}`);
+            const v: string = this.newTmp();
+            this.emit(`  ${v} = load i64, ptr ${ep}`);
+            return v;
+        }
         if (this.isGlobalVar(name)) {
             return this.rtCall("__lex_gget", [str(this.slotOfGlobal(name))]);
         }
@@ -521,6 +635,30 @@ class Codegen {
         const res: string = this.newTmp();
         this.emit(`  ${res} = load i64, ptr ${ra}`);
         return res;
+    }
+
+    // Converte a CÉLULA `v` do tipo `ftm` para o tipo `to`, nas bordas (let com
+    // anotação, atribuição, argumento, return). Um f64 trafega como os BITS do
+    // double num i64: `let x: i64 = round(...)` precisa de fptosi de VERDADE —
+    // senão guardaria o padrão de bits (um número gigante).
+    coerce(v: string, ftm: string, to: string): string {
+        const fFloat: bool = isFloatTy(ftm);
+        const tFloat: bool = isFloatTy(to);
+        if (fFloat == tFloat) { return v; }
+        if (fFloat) {                                  // f64 → inteiro
+            if (!isIntLike(to)) { return v; }
+            const d: string = this.newTmp();
+            this.emit(`  ${d} = bitcast i64 ${v} to double`);
+            const r: string = this.newTmp();
+            this.emit(`  ${r} = fptosi double ${d} to i64`);
+            return r;
+        }
+        if (!isIntLike(ftm)) { return v; }             // inteiro → f64
+        const d2: string = this.newTmp();
+        this.emit(`  ${d2} = sitofp i64 ${v} to double`);
+        const r2: string = this.newTmp();
+        this.emit(`  ${r2} = bitcast double ${d2} to i64`);
+        return r2;
     }
 
     // operando f64: f64 trafega como bits-do-double num i64 → bitcast p/ double;
@@ -734,9 +872,9 @@ class Codegen {
             const boxed: string = this.boxArrayLit(a);
             if (!strEq(boxed, "")) { return boxed; }
         }
-        const v: string = this.genExpr(a);
-        if (!strEq(paramTy, "any")) { return v; }
         const at: string = this.sema.typeOf(a, this.scope);
+        const v: string = this.genExpr(a);
+        if (!strEq(paramTy, "any")) { return this.coerce(v, at, paramTy); }
         if (strEq(at, "any")) { return v; }                                  // já é any
         if (strEq(at, "string")) { return this.rtCall("__lex_json_str", [v]); }
         if (strEq(at, "f64")) { return this.rtCall("__lex_json_float", [v]); }
@@ -859,11 +997,17 @@ class Codegen {
     genCall(c: Call): string {
         // chamada INDIRETA: c.name é uma variável de tipo função (arrow recebido)
         if (isFunctionType(this.scope.get(c.name))) {
-            const fp: string = this.genLoad(c.name);
+            const env: string = this.genLoad(c.name);            // a closure
+            const ep: string = this.newTmp();
+            this.emit(`  ${ep} = inttoptr i64 ${env} to ptr`);
+            const fp: string = this.newTmp();
+            this.emit(`  ${fp} = load i64, ptr ${ep}`);          // slot 0 = ponteiro da função
             const fpp: string = this.newTmp();
             this.emit(`  ${fpp} = inttoptr i64 ${fp} to ptr`);
+            let ar: string = concat("i64 ", env);                // env é o 1º argumento
+            for (const a of c.args) { ar = concat(ar, concat(", i64 ", this.genExpr(a))); }
             const t: string = this.newTmp();
-            this.emit(`  ${t} = call i64 ${fpp}(${this.argList(c.args)})`);
+            this.emit(`  ${t} = call i64 ${fpp}(${ar})`);
             return t;
         }
         // print(x): imprime um i64 via printf da libc (saída de verdade).
@@ -876,6 +1020,8 @@ class Codegen {
         if (strEq(c.name, "len")) { return this.genLen(c); }
         if (strEq(c.name, "super")) { return this.genSuperCall(c); }
         if (strEq(c.name, "min") || strEq(c.name, "max")) { return this.genMinMax(c); }
+        // join(h) com 1 arg = espera a thread; com 2 = join de array (runtimeFn)
+        if (strEq(c.name, "join") && c.args.len() == 1) { return this.joinCell(this.genExpr(c.args[0])); }
         if (idxOf(this.asyncNames, c.name) >= 0) { return this.spawnCall(c); }   // async: lança thread
         const rt: string = runtimeFn(c.name);
         if (!strEq(rt, "")) { return this.callRuntime(rt, c.args); }
@@ -984,7 +1130,7 @@ class Codegen {
             let rfn: string = "__lex_strlen";
             if (isArrayTy(baseTy)) { rfn = "__lex_arr_len"; }
             else if (isMapTy(baseTy)) { rfn = "__lex_map_len"; }
-            return this.emitCall(rfn, concat("i64 ", bv));
+            return this.rtCall(rfn, [bv]);
         }
         if (strEq(m.method, "push")) {
             let v: string = "0";
@@ -1064,7 +1210,7 @@ class Codegen {
         if (!strEq(pe, "")) {
             let o: string = "0";
             if (m.args.len() >= 1) { o = this.genExpr(m.args[0]); }
-            return this.emitCall(pe, `i64 ${bv}, i64 ${o}`);
+            return this.rtCall(pe, [bv, o]);
         }
         return "0";
     }
@@ -1109,12 +1255,18 @@ class Codegen {
     // base[idx]: arr_get / map_get / char_at conforme o tipo da base.
     genIndex(ix: Index): string {
         const baseTy: string = this.sema.typeOf(ix.base, this.scope);
+        const idxTy: string = this.sema.typeOf(ix.index, this.scope);
         const b: string = this.genExpr(ix.base);
         const i: string = this.genExpr(ix.index);
         let rfn: string = "__lex_arr_get";
         if (isMapTy(baseTy)) { rfn = "__lex_map_get"; }
         else if (strEq(baseTy, "string")) { rfn = "__lex_char_at"; }
-        return this.emitCall(rfn, `i64 ${b}, i64 ${i}`);
+        else if (strEq(baseTy, "any") || strEq(baseTy, "json")) {
+            // JSON: chave string → membro (json_get); índice int → elemento (json_at)
+            if (strEq(idxTy, "string")) { rfn = "__lex_json_get"; }
+            else { rfn = "__lex_json_at"; }
+        }
+        return this.rtCall(rfn, [b, i]);
     }
 
     // base[idx] = valor: arr_set / map_set (base, idx, valor) — nessa ordem.
@@ -1140,9 +1292,33 @@ class Codegen {
     }
 
     // obj.campo: membro de enum (Tok.Newline → inteiro) ou load do slot do campo.
+    // "Classe.campo" — a chave do slot global de um campo static (a classe é a
+    // DONA, resolvida por herança: Sub.count e Counter.count batem no mesmo slot).
+    staticKey(cls: string, field: string): string {
+        const own: string = this.sema.classes.staticOwner(cls, field);
+        if (strEq(own, "")) { return ""; }
+        return concat(own, concat(".", field));
+    }
+    // nome da classe se `e` for o NOME de uma classe (base de acesso static), senão "".
+    staticBase(e: Expr): string {
+        const n: string = varName(e);
+        if (strEq(n, "")) { return ""; }
+        if (!strEq(this.scope.get(n), "?")) { return ""; }     // é variável, não classe
+        if (this.sema.classes.findInfo(n) < 0) { return ""; }
+        return n;
+    }
+
     genField(f: Field): string {
         const ev: i64 = this.sema.enums.value(varName(f.base), f.field);
         if (ev >= 0) { return str(ev); }
+        // campo static: mora num slot global, não no objeto
+        const sb: string = this.staticBase(f.base);
+        if (!strEq(sb, "")) {
+            const k: string = this.staticKey(sb, f.field);
+            if (!strEq(k, "")) {
+                return this.rtCall("__lex_gget", [str(this.slotOfGlobal(k))]);
+            }
+        }
         const baseTy: string = this.sema.typeOf(f.base, this.scope);
         const b: string = this.genExpr(f.base);
         const slot: i64 = this.sema.classes.fieldSlot(baseTy, f.field);
@@ -1154,6 +1330,15 @@ class Codegen {
 
     // obj.campo = valor: store no slot do campo.
     genFieldAssign(f: Field, valExpr: Expr): i64 {
+        const sb: string = this.staticBase(f.base);
+        if (!strEq(sb, "")) {
+            const k: string = this.staticKey(sb, f.field);
+            if (!strEq(k, "")) {
+                const sv: string = this.boxArg(valExpr, this.sema.classes.staticType(sb, f.field));
+                this.rtCall("__lex_gset", [str(this.slotOfGlobal(k)), sv]);
+                return 0;
+            }
+        }
         const baseTy: string = this.sema.typeOf(f.base, this.scope);
         const b: string = this.genExpr(f.base);
         const slot: i64 = this.sema.classes.fieldSlot(baseTy, f.field);
@@ -1205,7 +1390,7 @@ class Codegen {
             NewExpr ne => this.genNew(ne),
             Field f => this.genField(f),
             Match mt => this.genMatch(mt),
-            Lambda lm => `ptrtoint (ptr @${lm.fnName} to i64)`,
+            Lambda lm => this.genClosure(lm),
             TryExpr t => this.genTry(t),
             CatchExpr c => this.genCatch(c),
             SpawnExpr s => this.genSpawnExpr(s),
@@ -1227,8 +1412,10 @@ class Codegen {
     genLet(l: LetStmt): i64 {
         // tipo: anotação, ou inferido do valor (com o escopo ANTES de l)
         let ty: string = l.ty;
-        if (strEq(ty, "")) { ty = this.sema.typeOf(l.value, this.scope); }
-        const v: string = this.genExpr(l.value);
+        const vt: string = this.sema.typeOf(l.value, this.scope);
+        if (strEq(ty, "")) { ty = vt; }
+        let v: string = this.genExpr(l.value);
+        v = this.coerce(v, vt, ty);        // `let x: i64 = round(...)` → fptosi
         this.storeVar(l.name, v);          // gset se global promovido; senão store na alloca
         this.scope.set(l.name, ty);
         return 0;
@@ -1236,11 +1423,16 @@ class Codegen {
 
     genAssign(a: AssignStmt): i64 {
         return match (a.target) {
-            Var vv => this.storeVar(vv.name, this.genExpr(a.value)),
+            Var vv => this.storeVar(vv.name, this.genAssignVal(a.value, this.scope.get(vv.name))),
             Index ix => this.genIndexAssign(ix, a.value),
             Field f => this.genFieldAssign(f, a.value),
             _ => 0
         };
+    }
+    // valor de uma atribuição, coagido ao tipo do destino.
+    genAssignVal(e: Expr, want: string): string {
+        const vt: string = this.sema.typeOf(e, this.scope);
+        return this.coerce(this.genExpr(e), vt, want);
     }
 
     // emite os statements adiados (defer) em ordem LIFO. Chamado antes de cada
@@ -1265,7 +1457,10 @@ class Codegen {
     }
     genReturn(r: ReturnStmt): i64 {
         let val: string = "0";
-        if (r.hasValue) { val = this.genExpr(r.value); }
+        if (r.hasValue) {
+            const vt: string = this.sema.typeOf(r.value, this.scope);
+            val = this.coerce(this.genExpr(r.value), vt, this.curRet);
+        }
         this.emitReturnVal(val);
         return 0;
     }
@@ -1424,7 +1619,11 @@ class Codegen {
         return 0;
     }
     genExprStmt(e: ExprStmt): i64 {
-        this.genExpr(e.expr);
+        const v: string = this.genExpr(e.expr);
+        // `spawn f(...)` como STATEMENT: ninguém vai esperar a thread → detach,
+        // senão o handle vaza. Como EXPRESSÃO (join/await), o handle fica vivo.
+        const isSpawn: bool = match (e.expr) { SpawnExpr sp => true, _ => false };
+        if (isSpawn) { this.emit(`  call i32 @pthread_detach(i64 ${v})`); }
         return 0;
     }
 
@@ -1449,44 +1648,84 @@ class Codegen {
     // spawn de uma chamada f(args): copia os args num struct no heap (malloc),
     // cria a thread via pthread_create e devolve o handle (pthread_t como i64).
     // Registra o thunk de `f` (emitido no fim do módulo).
-    spawnCall(c: Call): string {
-        const ptypes: string[] = this.sema.funcParamTypes(c.name);
+    // registra o thunk de `sym` (com sua aridade) — emitido no fim do módulo.
+    needThunk(sym: string, arity: i64) {
+        if (idxOf(this.thunkNames, sym) >= 0) { return; }
+        this.thunkNames.push(sym);
+        this.thunkArity.push(arity);
+    }
+    // copia as células dos args num struct do heap e cria a thread; devolve o
+    // handle (pthread_t como i64). `sym` é a função-alvo já resolvida (uma função
+    // de topo, ou `Dono.metodo` — nesse caso `cells[0]` é o `this`).
+    spawnSym(sym: string, cells: string[]): string {
         const id: i64 = this.matchN;
         this.matchN = this.matchN + 1;
         let argp: string = "null";
-        if (c.args.len() > 0) {
-            const argi: string = this.rtCall("malloc", [str(c.args.len() * 8)]);
+        if (cells.len() > 0) {
+            const argi: string = this.rtCall("malloc", [str(cells.len() * 8)]);
             const p: string = this.newTmp();
             this.emit(`  ${p} = inttoptr i64 ${argi} to ptr`);
             let i: i64 = 0;
-            for (const a of c.args) {
-                let pt: string = "";
-                if (i < ptypes.len()) { pt = ptypes[i]; }
-                const v: string = this.boxArg(a, pt);
+            for (const cv of cells) {
                 const fp: string = this.newTmp();
                 this.emit(`  ${fp} = getelementptr i64, ptr ${p}, i64 ${i}`);
-                this.emit(`  store i64 ${v}, ptr ${fp}`);
+                this.emit(`  store i64 ${cv}, ptr ${fp}`);
                 i = i + 1;
             }
             argp = p;
         }
-        addUniq(this.thunkNames, c.name);
+        this.needThunk(sym, cells.len());
         const ts: string = `%tid${id}.addr`;
         this.emit(`  ${ts} = alloca i64`);
-        this.emit(`  call i32 @pthread_create(ptr ${ts}, ptr null, ptr @__lex_thunk_${c.name}, ptr ${argp})`);
+        this.emit(`  call i32 @pthread_create(ptr ${ts}, ptr null, ptr @__lex_thunk_${sym}, ptr ${argp})`);
         const tid: string = this.newTmp();
         this.emit(`  ${tid} = load i64, ptr ${ts}`);
         return tid;
     }
-    // spawn f(args) como expressão/statement: fire-and-forget → detach a thread.
+    // spawn f(args) — função de topo
+    spawnCall(c: Call): string {
+        const ptypes: string[] = this.sema.funcParamTypes(c.name);
+        let cells: string[] = [];
+        let i: i64 = 0;
+        for (const a of c.args) {
+            let pt: string = "";
+            if (i < ptypes.len()) { pt = ptypes[i]; }
+            cells.push(this.boxArg(a, pt));
+            i = i + 1;
+        }
+        return this.spawnSym(c.name, cells);
+    }
+    // spawn obj.metodo(args) — o alvo é @Dono.metodo e o `this` entra como arg0.
+    spawnMethod(m: MethodCall): string {
+        const bt: string = this.sema.typeOf(m.base, this.scope);
+        const owner: string = this.sema.classes.methodOwner(bt, m.method);
+        if (strEq(owner, "")) { return "0"; }
+        const bv: string = this.genExpr(m.base);
+        const ptypes: string[] = this.sema.methodParamTypes(bt, m.method);
+        let cells: string[] = [bv];
+        let i: i64 = 0;
+        for (const a of m.args) {
+            let pt: string = "";
+            if (i < ptypes.len()) { pt = ptypes[i]; }
+            cells.push(this.boxArg(a, pt));
+            i = i + 1;
+        }
+        return this.spawnSym(concat(owner, concat(".", m.method)), cells);
+    }
+    // spawn f(args) / spawn obj.m(args) — devolve o HANDLE. NÃO faz detach aqui:
+    // `join(spawn ...)` / `await` precisam do handle vivo. O detach (fire-and-forget)
+    // acontece só quando o spawn é um STATEMENT — ver genExprStmt.
     genSpawnExpr(s: SpawnExpr): string {
-        const tid: string = match (s.call) { Call c => this.spawnCall(c), _ => "0" };
-        this.emit(`  call i32 @pthread_detach(i64 ${tid})`);
-        return tid;
+        return match (s.call) {
+            Call c => this.spawnCall(c),
+            MethodCall mc => this.spawnMethod(mc),
+            _ => "0"
+        };
     }
     // await fut: pthread_join no handle; o resultado volta disfarçado de ponteiro.
-    genAwait(a: AwaitExpr): string {
-        const h: string = this.genExpr(a.inner);
+    genAwait(a: AwaitExpr): string { return this.joinCell(this.genExpr(a.inner)); }
+    // pthread_join num handle: o resultado volta disfarçado de ponteiro.
+    joinCell(h: string): string {
         const id: i64 = this.matchN;
         this.matchN = this.matchN + 1;
         const slot: string = `%join${id}.addr`;
@@ -1500,10 +1739,8 @@ class Codegen {
     }
     // thunk de thread p/ `fn`: ptr(ptr) — desempacota os args, chama fn, devolve
     // o resultado como ponteiro (o await desfaz). free no struct (se houver args).
-    genThunk(fnName: string) {
+    genThunk(fnName: string, n: i64) {
         this.tmp = 0;
-        const ptypes: string[] = this.sema.funcParamTypes(fnName);
-        const n: i64 = ptypes.len();
         this.raw(`define ptr @__lex_thunk_${fnName}(ptr %argp) {`);
         this.term = false;
         let argStr: string = "";
@@ -1529,6 +1766,36 @@ class Codegen {
         this.term = true;
         this.raw("}");
         this.raw("");
+    }
+
+    // capturas declaradas da arrow `name` (vazio se não achar)
+    lambdaCaptures(name: string): string[] {
+        for (const f of this.lambdaFuncs) {
+            if (strEq(f.name, name)) { return f.captures; }
+        }
+        let empty: string[] = [];
+        return empty;
+    }
+    // arrow como VALOR → uma CLOSURE: bloco no heap com o ponteiro da função no
+    // slot 0 e uma CÓPIA de cada variável capturada nos slots 1.. (captura POR
+    // VALOR: mudar a original depois não afeta a closure). O `f(x)` indireto lê o
+    // ponteiro do slot 0 e passa o próprio env como 1º argumento.
+    genClosure(lm: Lambda): string {
+        const caps: string[] = this.lambdaCaptures(lm.fnName);
+        const n: i64 = caps.len() + 1;
+        const env: string = this.rtCall("__lex_heap_alloc", [str(n * 8)]);
+        const p: string = this.newTmp();
+        this.emit(`  ${p} = inttoptr i64 ${env} to ptr`);
+        this.emit(`  store i64 ptrtoint (ptr @${lm.fnName} to i64), ptr ${p}`);
+        let i: i64 = 0;
+        for (const c of caps) {
+            const v: string = this.genLoad(c);          // valor ATUAL, no escopo de criação
+            const ep: string = this.newTmp();
+            this.emit(`  ${ep} = getelementptr i64, ptr ${p}, i64 ${i + 1}`);
+            this.emit(`  store i64 ${v}, ptr ${ep}`);
+            i = i + 1;
+        }
+        return env;
     }
 
     // try <call>: avalia; se o callee setou o flag de erro, PROPAGA (retorna da
@@ -1599,6 +1866,12 @@ class Codegen {
             this.emit(`  ${cb} = icmp ne i64 ${eq}, 0`);
             return cb;
         }
+        if (arm.kind == 5) {                                  // variante de enum
+            const ev: i64 = this.sema.enums.value(arm.pat, arm.bind);
+            const cb: string = this.newTmp();
+            this.emit(`  ${cb} = icmp eq i64 ${subj}, ${ev}`);
+            return cb;
+        }
         const ge: string = this.newTmp();                     // faixa [lo, hi)
         this.emit(`  ${ge} = icmp sge i64 ${subj}, ${arm.lo}`);
         const lt: string = this.newTmp();
@@ -1609,7 +1882,32 @@ class Codegen {
     }
     // braço com literal/faixa e/ou guarda. (Os casos tag-de-classe e curinga SEM
     // guarda ficam no caminho antigo do genMatch, byte-idêntico p/ o bootstrap.)
+    // `{x, y} =>` — destructuring. O struct-literal já nasce OBJETO JSON, então cada
+    // campo sai por json_get + jsonAsInt. (Campos não-numéricos precisariam dos tipos
+    // do `type X = {...}`, que hoje é erasure — ver REMOVER-RUST.md.)
+    genDestructure(arm: MatchArm, subj: string, ra: string, lend: string) {
+        const names: string[] = splitCommas(arm.pat);
+        const id: i64 = this.matchN;
+        this.matchN = this.matchN + 1;
+        let nb: i64 = 0;
+        for (const nm of names) {
+            const kj: string = this.rtCall("__lex_json_get", [subj, this.genStrLit(nm)]);
+            const iv: string = this.rtCall("__lex_json_as_int", [kj]);
+            const ad: string = `%ds${id}_${nb}.addr`;
+            this.emit(`  ${ad} = alloca i64`);
+            this.emit(`  store i64 ${iv}, ptr ${ad}`);
+            this.bindPush(nm, ad, "i64");
+            nb = nb + 1;
+        }
+        const v: string = this.genExpr(arm.body);
+        let k: i64 = 0;
+        while (k < nb) { this.bindPop(); k = k + 1; }
+        this.emit(`  store i64 ${v}, ptr ${ra}`);
+        if (!this.term) { this.emit(`  br label %${lend}`); this.term = true; }
+    }
+
     genMatchArm(arm: MatchArm, subj: string, sa: string, tag: string, ra: string, lend: string) {
+        if (arm.kind == 6) { this.genDestructure(arm, subj, ra, lend); return; }
         const lno: string = this.newLabel();
         if (arm.kind != 4) {                     // curinga/binding casa sempre
             const cb: string = this.matchCond(arm, subj, tag);
@@ -1618,7 +1916,9 @@ class Codegen {
             this.term = true;
             this.label(lyes);
         }
-        this.bindPush(arm.bind, sa, "?");        // liga ANTES da guarda (`x if x < 10`)
+        let bnd: string = arm.bind;
+        if (arm.kind == 5) { bnd = ""; }         // `Color.Red` não liga variável
+        this.bindPush(bnd, sa, "?");             // liga ANTES da guarda (`x if x < 10`)
         if (arm.hasGuard) {
             const g: string = this.genExpr(arm.guard);
             const gc: string = this.newTmp();
@@ -1698,6 +1998,8 @@ class Codegen {
         this.lbl = 0;
         this.term = false;
         this.curMain = false;
+        this.curRet = f.ret;
+        this.curCaptures = [];
         this.curClass = cls;         // p/ resolver super(...) ao pai
         this.curDefers = [];
         this.scope = new Scope();
@@ -1730,13 +2032,21 @@ class Codegen {
         this.lbl = 0;
         this.term = false;
         this.curMain = strEq(f.name, "main");
+        this.curRet = f.ret;
         this.curClass = "";          // função livre: fora de classe
         this.curDefers = [];
         this.scope = new Scope();
+        // arrow: o 1º parâmetro é o ENV da closure, e as capturas são lidas dele
+        const isLam: bool = isLambdaName(f.name);
+        if (isLam) { this.curCaptures = f.captures; } else { this.curCaptures = []; }
+        // `this` capturado: sem o tipo, um `this.campo` dentro da arrow não acharia
+        // o slot do campo. O parser anota a classe onde a arrow foi escrita.
+        if (isLam && !strEq(f.ownerClass, "")) { this.scope.set("this", f.ownerClass); }
         for (const p of f.params) { this.scope.set(p.name, p.ty); }
 
         let ps: string = "";
         let first: bool = true;
+        if (isLam) { ps = "i64 %__env"; first = false; }
         for (const p of f.params) {
             if (!first) { ps = concat(ps, ", "); }
             ps = concat(ps, concat("i64 %", p.name));
@@ -1756,13 +2066,25 @@ class Codegen {
         collectLocals(f.body, locals);
         // main e lambdas: globais promovidos ficam fora dos allocas (são gget/gset);
         // funções normais: tudo é local (param/local sombreia qualquer global homônimo).
-        if (this.curMain || isLambdaName(f.name)) { this.curLocals = without(locals, this.globalNames); }
-        else { this.curLocals = locals; }
+        this.curLocals = without(locals, this.curCaptures);   // capturas vêm do env
         for (const lnm of this.curLocals) { this.emit(`  %${lnm}.addr = alloca i64`); }
         for (const p of f.params) {
             this.emit(`  store i64 %${p.name}, ptr %${p.name}.addr`);
         }
 
+        // campos static são inicializados UMA vez, no topo do main (o init pode ser
+        // uma expressão qualquer — `static base: i64 = 10 * 4 + 2`).
+        if (this.curMain) {
+            for (const c of this.staticClasses) {
+                let si: i64 = 0;
+                while (si < c.statics.len()) {
+                    const key: string = concat(c.name, concat(".", c.statics[si].name));
+                    const iv: string = this.boxArg(c.staticInits[si], c.statics[si].ty);
+                    this.rtCall("__lex_gset", [str(this.slotOfGlobal(key)), iv]);
+                    si = si + 1;
+                }
+            }
+        }
         this.genStmts(f.body);
 
         if (!this.term) { this.emitReturnVal("0"); }   // fall-through (roda defers)
@@ -1775,12 +2097,44 @@ class Codegen {
         // const/let de topo (do main) E os DIRETOS de cada lambda viram globais
         // promovidos (gget/gset) — assim arrows os capturam (sem closure/env),
         // inclusive captura aninhada. Definido ANTES de gerar funcs/lambdas/main.
-        this.globalNames = directLetNames(prog.main);
+        this.staticClasses = prog.classes;
+        // Nomes de TOPO (não são capturáveis: funções, classes, enums, prelúdio).
+        let topNames: string[] = [];
+        addUniq(topNames, "Terminal");
+        for (const fl of prog.funcs) { addUniq(topNames, fl.name); }
+        for (const c of prog.classes) { addUniq(topNames, c.name); }
+        for (const en of prog.enums) { addUniq(topNames, en.name); }
+        // Capturas de cada arrow = nomes USADOS no corpo, menos os que ela mesma
+        // liga (params + locais) e os de topo. Capturados POR VALOR no env.
         for (const fl of prog.funcs) {
             if (isLambdaName(fl.name)) {
-                for (const nm of directLetNames(fl.body)) { addUniq(this.globalNames, nm); }
+                this.lambdaFuncs.push(fl);
+                let used: string[] = [];
+                usedInStmts(fl.body, used);
+                let bound: string[] = [];
+                for (const p of fl.params) { addUniq(bound, p.name); }
+                collectLocals(fl.body, bound);
+                // uma arrow ANINHADA aparece em `used` pelo NOME: o que ELA captura
+                // também é livre AQUI (a externa precisa carregar o valor p/ montar o
+                // env da interna). As internas são içadas ANTES, então já têm captures.
+                let expanded: string[] = [];
+                for (const u of used) {
+                    if (isLambdaName(u)) {
+                        for (const ic of this.lambdaCaptures(u)) { addUniq(expanded, ic); }
+                    } else { addUniq(expanded, u); }
+                }
+                let caps: string[] = [];
+                for (const u of expanded) {
+                    if (idxOf(bound, u) < 0 && idxOf(topNames, u) < 0) { addUniq(caps, u); }
+                }
+                fl.captures = caps;
             }
             if (fl.isAsync) { addUniq(this.asyncNames, fl.name); }   // chamada → spawn
+        }
+        this.globalNames = [];   // sem promoção a global: a captura é por env agora
+        // campos `static`: um SLOT GLOBAL por campo, na classe que o DECLARA.
+        for (const c of prog.classes) {
+            for (const sf of c.statics) { addUniq(this.globalNames, concat(c.name, concat(".", sf.name))); }
         }
         // preâmbulo. As declarações do runtime saem da TABELA DE ABI (rtAbi): tipos
         // certos p/ ponteiro e void — é o que faz o mesmo .ll servir no nativo (ptr
@@ -1811,7 +2165,11 @@ class Codegen {
             this.genFunc(mainFn);
         }
         // thunks de thread (1 por função spawnada/async) — depois que tudo existe.
-        for (const tn of this.thunkNames) { this.genThunk(tn); }
+        let ti: i64 = 0;
+        while (ti < this.thunkNames.len()) {
+            this.genThunk(this.thunkNames[ti], this.thunkArity[ti]);
+            ti = ti + 1;
+        }
         // globais de string literais (ordem livre no módulo → no fim)
         for (const g of this.strs) { this.raw(g); }
         return 0;
