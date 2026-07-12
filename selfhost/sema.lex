@@ -179,6 +179,33 @@ class ClassTable {
         for (const m of ci.methods) { if (strEq(m.name, method)) { return m.owner; } }
         return "";
     }
+    // `cls` é `base` ou descende dele?
+    isSubclassOf(cls: string, base: string): bool {
+        const want: string = baseName(base);
+        let cur: string = baseName(cls);
+        let guard: i64 = 0;
+        while (!strEq(cur, "") && guard < 64) {
+            if (strEq(cur, want)) { return true; }
+            const i: i64 = this.indexOfDecl(cur);
+            if (i < 0) { return false; }
+            cur = this.decls[i].parent;
+            guard = guard + 1;
+        }
+        return false;
+    }
+    // classes que descendem de `cls` (ou são ela) e têm implementação PRÓPRIA de
+    // `method`. len() > 1 ⇒ o método é sobrescrito ⇒ precisa de dispatch dinâmico.
+    overridersOf(cls: string, method: string): string[] {
+        let r: string[] = [];
+        for (const d of this.decls) {
+            if (this.isSubclassOf(d.name, cls)) {
+                for (const mm of d.methods) {
+                    if (strEq(mm.name, method)) { r.push(d.name); }
+                }
+            }
+        }
+        return r;
+    }
 }
 
 // ── tabela de enums ──────────────────────────────────────────────────────────

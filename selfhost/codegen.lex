@@ -619,6 +619,55 @@ class Codegen {
         return this.emitCall(c.name, this.argListBoxed(c.args, this.sema.funcParamTypes(c.name)));
     }
 
+    // Dispatch DINÂMICO (polimorfismo): o método é sobrescrito, então a impl certa
+    // depende da CLASSE REAL do objeto. Lê a tag (slot 0) e compara com a de cada
+    // classe que tem impl própria; o fallback é a resolução estática (subclasse que
+    // herda sem sobrescrever). Os args são gerados UMA vez, antes dos branches.
+    genDynDispatch(m: MethodCall, bv: string, baseTy: string, ovs: string[]): string {
+        const ptypes: string[] = this.sema.methodParamTypes(baseTy, m.method);
+        let argStr: string = concat("i64 ", bv);
+        let i: i64 = 0;
+        for (const a of m.args) {
+            let pt: string = "";
+            if (i < ptypes.len()) { pt = ptypes[i]; }
+            argStr = concat(argStr, concat(", i64 ", this.boxArg(a, pt)));
+            i = i + 1;
+        }
+        const id: i64 = this.matchN;
+        this.matchN = this.matchN + 1;
+        const ra: string = `%dyn${id}.addr`;
+        this.emit(`  ${ra} = alloca i64`);
+        const sp: string = this.newTmp();
+        this.emit(`  ${sp} = inttoptr i64 ${bv} to ptr`);
+        const tag: string = this.newTmp();
+        this.emit(`  ${tag} = load i64, ptr ${sp}`);
+        const lend: string = this.newLabel();
+        for (const oc of ovs) {
+            const t: i64 = this.sema.classes.indexOfDecl(oc);
+            const cb: string = this.newTmp();
+            this.emit(`  ${cb} = icmp eq i64 ${tag}, ${t}`);
+            const lyes: string = this.newLabel();
+            const lno: string = this.newLabel();
+            this.emit(`  br i1 ${cb}, label %${lyes}, label %${lno}`);
+            this.term = true;
+            this.label(lyes);
+            const rv: string = this.emitCall(concat(oc, concat(".", m.method)), argStr);
+            this.emit(`  store i64 ${rv}, ptr ${ra}`);
+            this.emit(`  br label %${lend}`);
+            this.term = true;
+            this.label(lno);
+        }
+        const so: string = this.sema.classes.methodOwner(baseTy, m.method);
+        const fv: string = this.emitCall(concat(so, concat(".", m.method)), argStr);
+        this.emit(`  store i64 ${fv}, ptr ${ra}`);
+        this.emit(`  br label %${lend}`);
+        this.term = true;
+        this.label(lend);
+        const r: string = this.newTmp();
+        this.emit(`  ${r} = load i64, ptr ${ra}`);
+        return r;
+    }
+
     // chamadas de método: Terminal.log e (Stage B/C) coleções; resto → F6.4.
     genMethodCall(m: MethodCall): string {
         if (strEq(varName(m.base), "Terminal")) {
@@ -648,10 +697,13 @@ class Codegen {
         const bv: string = this.genExpr(m.base);
         // Método de CLASSE tem prioridade sobre os builtins de mesmo nome: uma
         // classe do usuário com `.push`/`.send`/`.free` (ex.: Pilha<T>) não pode
-        // virar __lex_arr_push. Dispatch estático @Dono.metodo(this, args…).
+        // virar __lex_arr_push. Dispatch estático @Dono.metodo(this, args…), ou
+        // DINÂMICO (pela tag) se o método for sobrescrito em alguma subclasse.
         if (isClassTy(baseTy) && this.sema.classes.findInfo(baseTy) >= 0) {
             const owner: string = this.sema.classes.methodOwner(baseTy, m.method);
             if (!strEq(owner, "")) {
+                const ovs: string[] = this.sema.classes.overridersOf(baseTy, m.method);
+                if (ovs.len() > 1) { return this.genDynDispatch(m, bv, baseTy, ovs); }
                 const ptypes: string[] = this.sema.methodParamTypes(baseTy, m.method);
                 let argStr: string = concat("i64 ", bv);
                 let i: i64 = 0;
