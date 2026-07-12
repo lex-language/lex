@@ -113,6 +113,143 @@ fn runtimeFn(name: string): string {
     return "";
 }
 
+// ── ABI do runtime ───────────────────────────────────────────────────────────
+// Assinatura REAL (C) de cada símbolo, como "<args>|<ret>":
+//   'p' = ponteiro   '.' = i64 (escalar)   'v' = void (só no retorno)
+// Tudo em lex trafega como CÉLULA i64; nas bordas convertemos (inttoptr/ptrtoint).
+// No nativo ptr==i64 e isso é inócuo. No **wasm32 ptr==i32** — sem esta tabela a
+// assinatura não bate com o objeto da runtime.c e o `wasm-ld` recusa o link.
+// (Também importa o `void`: declarar `arr_push` como i64 passa no nativo — a
+// linkagem C não checa — mas o wasm-ld checa e quebra.)
+fn rtAbi(sym: string): string {
+    // strings
+    if (strEq(sym, "__lex_concat")) { return "pp|p"; }
+    if (strEq(sym, "__lex_strlen")) { return "p|."; }
+    if (strEq(sym, "__lex_str_eq")) { return "pp|."; }
+    if (strEq(sym, "__lex_contains")) { return "pp|."; }
+    if (strEq(sym, "__lex_starts_with")) { return "pp|."; }
+    if (strEq(sym, "__lex_ends_with")) { return "pp|."; }
+    if (strEq(sym, "__lex_substring")) { return "p..|p"; }
+    if (strEq(sym, "__lex_char_at")) { return "p.|p"; }
+    if (strEq(sym, "__lex_to_lower")) { return "p|p"; }
+    if (strEq(sym, "__lex_to_upper")) { return "p|p"; }
+    if (strEq(sym, "__lex_trim")) { return "p|p"; }
+    if (strEq(sym, "__lex_str_replace")) { return "ppp|p"; }
+    if (strEq(sym, "__lex_i64_to_str")) { return ".|p"; }
+    if (strEq(sym, "__lex_f64_to_str")) { return ".|p"; }
+    if (strEq(sym, "__lex_parse_int")) { return "p|."; }
+    if (strEq(sym, "__lex_parse_float")) { return "p|."; }
+    // arrays
+    if (strEq(sym, "__lex_arr_new")) { return ".|p"; }
+    if (strEq(sym, "__lex_arr_len")) { return "p|."; }
+    if (strEq(sym, "__lex_arr_push")) { return "p.|v"; }
+    if (strEq(sym, "__lex_arr_pop")) { return "p|."; }
+    if (strEq(sym, "__lex_arr_get")) { return "p.|."; }
+    if (strEq(sym, "__lex_arr_set")) { return "p..|v"; }
+    if (strEq(sym, "__lex_arr_join")) { return "pp|p"; }
+    // map
+    if (strEq(sym, "__lex_map_new")) { return "|p"; }
+    if (strEq(sym, "__lex_map_len")) { return "p|."; }
+    if (strEq(sym, "__lex_map_get")) { return "pp|."; }
+    if (strEq(sym, "__lex_map_set")) { return "pp.|v"; }
+    // memória crua
+    if (strEq(sym, "__lex_alloc")) { return ".|p"; }
+    if (strEq(sym, "__lex_heap_alloc")) { return ".|p"; }
+    if (strEq(sym, "__lex_free")) { return "p|v"; }
+    if (strEq(sym, "__lex_poke8") || strEq(sym, "__lex_poke16")
+        || strEq(sym, "__lex_poke32") || strEq(sym, "__lex_poke64")) { return "p..|v"; }
+    if (strEq(sym, "__lex_peek8") || strEq(sym, "__lex_peek16")
+        || strEq(sym, "__lex_peek32") || strEq(sym, "__lex_peek64")) { return "p.|."; }
+    // json
+    if (strEq(sym, "__lex_json_num")) { return ".|p"; }
+    if (strEq(sym, "__lex_json_float")) { return ".|p"; }
+    if (strEq(sym, "__lex_json_bool")) { return ".|p"; }
+    if (strEq(sym, "__lex_json_str")) { return "p|p"; }
+    if (strEq(sym, "__lex_json_object")) { return "|p"; }
+    if (strEq(sym, "__lex_json_set")) { return "ppp|v"; }
+    if (strEq(sym, "__lex_json_eq")) { return "pp|."; }
+    if (strEq(sym, "__lex_json_as_int")) { return "p|."; }
+    if (strEq(sym, "__lex_json_as_float")) { return "p|."; }
+    if (strEq(sym, "__lex_json_as_str")) { return "p|p"; }
+    if (strEq(sym, "__lex_json_stringify")) { return "p|p"; }
+    // host / io
+    if (strEq(sym, "__lex_fs_read")) { return "p|p"; }
+    if (strEq(sym, "__lex_fs_write")) { return "pp|."; }
+    if (strEq(sym, "__lex_fs_exists")) { return "p|."; }
+    if (strEq(sym, "__lex_read_stdin")) { return ".|p"; }
+    if (strEq(sym, "__lex_system")) { return "p|."; }
+    if (strEq(sym, "__lex_args")) { return "|."; }
+    // slots globais, erro, math f64 (tudo escalar)
+    if (strEq(sym, "__lex_gget")) { return ".|."; }
+    if (strEq(sym, "__lex_gset")) { return "..|v"; }
+    if (strEq(sym, "__lex_set_err")) { return ".|."; }
+    if (strEq(sym, "__lex_has_err")) { return "|."; }
+    if (strEq(sym, "__lex_take_err")) { return "|."; }
+    if (strEq(sym, "__lex_f_pow")) { return "..|."; }
+    if (strEq(sym, "__lex_f_abs") || strEq(sym, "__lex_f_sqrt") || strEq(sym, "__lex_f_floor")
+        || strEq(sym, "__lex_f_ceil") || strEq(sym, "__lex_f_round") || strEq(sym, "__lex_f_sin")
+        || strEq(sym, "__lex_f_cos") || strEq(sym, "__lex_f_tan") || strEq(sym, "__lex_f_exp")
+        || strEq(sym, "__lex_f_ln") || strEq(sym, "__lex_f_log10")) { return ".|."; }
+    // canais
+    if (strEq(sym, "__lex_chan_new")) { return "|p"; }
+    if (strEq(sym, "__lex_chan_send")) { return "p.|v"; }
+    if (strEq(sym, "__lex_chan_recv")) { return "p|."; }
+    if (strEq(sym, "__lex_chan_close")) { return "p|."; }
+    // libc usada pelas threads
+    if (strEq(sym, "malloc")) { return ".|p"; }
+    if (strEq(sym, "free")) { return "p|v"; }
+    return "";
+}
+// todos os símbolos do runtime, p/ gerar as declarações do preâmbulo.
+fn rtSymbols(): string[] {
+    return ["__lex_concat", "__lex_strlen", "__lex_str_eq", "__lex_contains",
+        "__lex_starts_with", "__lex_ends_with", "__lex_substring", "__lex_char_at",
+        "__lex_to_lower", "__lex_to_upper", "__lex_trim", "__lex_str_replace",
+        "__lex_i64_to_str", "__lex_f64_to_str", "__lex_parse_int", "__lex_parse_float",
+        "__lex_arr_new", "__lex_arr_len", "__lex_arr_push", "__lex_arr_pop",
+        "__lex_arr_get", "__lex_arr_set", "__lex_arr_join",
+        "__lex_map_new", "__lex_map_len", "__lex_map_get", "__lex_map_set",
+        "__lex_alloc", "__lex_heap_alloc", "__lex_free",
+        "__lex_poke8", "__lex_poke16", "__lex_poke32", "__lex_poke64",
+        "__lex_peek8", "__lex_peek16", "__lex_peek32", "__lex_peek64",
+        "__lex_json_num", "__lex_json_float", "__lex_json_bool", "__lex_json_str",
+        "__lex_json_object", "__lex_json_set", "__lex_json_eq", "__lex_json_as_int",
+        "__lex_json_as_float", "__lex_json_as_str", "__lex_json_stringify",
+        "__lex_fs_read", "__lex_fs_write", "__lex_fs_exists", "__lex_read_stdin",
+        "__lex_system", "__lex_args",
+        "__lex_gget", "__lex_gset", "__lex_set_err", "__lex_has_err", "__lex_take_err",
+        "__lex_f_abs", "__lex_f_sqrt", "__lex_f_pow", "__lex_f_floor", "__lex_f_ceil",
+        "__lex_f_round", "__lex_f_sin", "__lex_f_cos", "__lex_f_tan", "__lex_f_exp",
+        "__lex_f_ln", "__lex_f_log10",
+        "__lex_chan_new", "__lex_chan_send", "__lex_chan_recv", "__lex_chan_close",
+        "malloc", "free"];
+}
+// "pp|p" → parte dos args ("pp") e do retorno ("p")
+fn abiArgs(abi: string): string {
+    let i: i64 = 0;
+    const n: i64 = len(abi);
+    while (i < n) {
+        if (peek8(abi, i) == 124) { return substring(abi, 0, i); }   // '|'
+        i = i + 1;
+    }
+    return "";
+}
+fn abiRet(abi: string): string {
+    let i: i64 = 0;
+    const n: i64 = len(abi);
+    while (i < n) {
+        if (peek8(abi, i) == 124) { return substring(abi, i + 1, n); }
+        i = i + 1;
+    }
+    return ".";
+}
+// caractere de ABI → tipo LLVM
+fn abiTy(c: i64): string {
+    if (c == 112) { return "ptr"; }        // 'p'
+    if (c == 118) { return "void"; }       // 'v'
+    return "i64";
+}
+
 // método de escrita em ptr (off, val) → void; "" se não for poke.
 fn ptrPoke(m: string): string {
     if (strEq(m, "poke8")) { return "__lex_poke8"; }
@@ -195,6 +332,7 @@ class Codegen {
     curDefers: Stmt[]     // statements adiados (defer) — emitidos antes de cada ret
     thunkNames: string[]  // funções que precisam de thunk de thread (spawn/async)
     asyncNames: string[]  // funções `async` — chamá-las lança thread (vira Future)
+    target: i64           // 0 = nativo, 1 = wasm32 (muda triple/datalayout)
 
     constructor(sema: Sema) {
         this.outParts = []
@@ -202,6 +340,7 @@ class Codegen {
         this.curDefers = []
         this.thunkNames = []
         this.asyncNames = []
+        this.target = 0
         this.tmp = 0
         this.lbl = 0
         this.term = false
@@ -298,7 +437,7 @@ class Codegen {
 
     genLoad(name: string): string {
         if (this.isGlobalVar(name)) {
-            return this.emitCall("__lex_gget", concat("i64 ", str(this.slotOfGlobal(name))));
+            return this.rtCall("__lex_gget", [str(this.slotOfGlobal(name))]);
         }
         const t: string = this.newTmp();
         this.emit(`  ${t} = load i64, ptr ${this.varAddrOf(name)}`);
@@ -418,9 +557,9 @@ class Codegen {
         const ty: string = this.sema.typeOf(e, this.scope);
         const v: string = this.genExpr(e);
         if (strEq(ty, "string")) { return v; }
-        if (isFloatTy(ty)) { return this.emitCall("__lex_f64_to_str", concat("i64 ", v)); }
+        if (isFloatTy(ty)) { return this.rtCall("__lex_f64_to_str", [v]); }
         if (strEq(ty, "bool")) { return this.boolToStr(v); }
-        return this.emitCall("__lex_i64_to_str", concat("i64 ", v));
+        return this.rtCall("__lex_i64_to_str", [v]);
     }
     genTemplate(t: Template): string {
         if (t.parts.len() == 0) { return this.genStrLit(""); }
@@ -428,7 +567,7 @@ class Codegen {
         let i: i64 = 1;
         while (i < t.parts.len()) {
             const p: string = this.tplPart(t.parts[i]);
-            acc = this.emitCall("__lex_concat", `i64 ${acc}, i64 ${p}`);
+            acc = this.rtCall("__lex_concat", [acc, p]);
             i = i + 1;
         }
         return acc;
@@ -441,6 +580,70 @@ class Codegen {
         const nbytes: i64 = len(value) + 1;
         this.strs.push(`${name} = private unnamed_addr constant [${nbytes} x i8] c"${irEscape(value)}\\00"`);
         return `ptrtoint (ptr ${name} to i64)`;
+    }
+
+    // ── ponte com a ABI do runtime (ver rtAbi) ──────────────────────────────
+    // célula i64 → operando tipado do parâmetro ("ptr %tN" ou "i64 %tN").
+    abiArg(v: string, c: i64): string {
+        if (c != 112) { return concat("i64 ", v); }        // '.' escalar
+        const t: string = this.newTmp();
+        this.emit(`  ${t} = inttoptr i64 ${v} to ptr`);
+        return concat("ptr ", t);
+    }
+    // chamada a uma função do runtime, ciente da ABI. `args` = células i64;
+    // devolve a célula i64 do resultado ("0" se void).
+    rtCall(sym: string, args: string[]): string {
+        const abi: string = rtAbi(sym);
+        const aks: string = abiArgs(abi);
+        const rk: string = abiRet(abi);
+        let argStr: string = "";
+        let i: i64 = 0;
+        for (const a of args) {
+            let c: i64 = 46;                               // '.' se a ABI não disser
+            if (i < len(aks)) { c = peek8(aks, i); }
+            if (i > 0) { argStr = concat(argStr, ", "); }
+            argStr = concat(argStr, this.abiArg(a, c));
+            i = i + 1;
+        }
+        if (strEq(rk, "v")) {
+            this.emit(`  call void @${sym}(${argStr})`);
+            return "0";
+        }
+        const t: string = this.newTmp();
+        if (strEq(rk, "p")) {
+            this.emit(`  ${t} = call ptr @${sym}(${argStr})`);
+            const cell: string = this.newTmp();
+            this.emit(`  ${cell} = ptrtoint ptr ${t} to i64`);
+            return cell;
+        }
+        this.emit(`  ${t} = call i64 @${sym}(${argStr})`);
+        return t;
+    }
+    // `declare <ret> @sym(<tipos>)` derivado da ABI.
+    rtDecl(sym: string): string {
+        const abi: string = rtAbi(sym);
+        const aks: string = abiArgs(abi);
+        let ps: string = "";
+        let i: i64 = 0;
+        while (i < len(aks)) {
+            if (i > 0) { ps = concat(ps, ", "); }
+            ps = concat(ps, abiTy(peek8(aks, i)));
+            i = i + 1;
+        }
+        const rk: string = abiRet(abi);
+        let rt: string = "i64";
+        if (strEq(rk, "p")) { rt = "ptr"; }
+        if (strEq(rk, "v")) { rt = "void"; }
+        return `declare ${rt} @${sym}(${ps})`;
+    }
+
+    // printf("%s\n", s): o operando é um PONTEIRO e tem que entrar no vararg como
+    // `ptr`. No nativo daria no mesmo, mas no wasm32 o va_arg lê 4 bytes — passar
+    // i64 desalinha a lista e imprime lixo.
+    printfStr(cell: string) {
+        const p: string = this.newTmp();
+        this.emit(`  ${p} = inttoptr i64 ${cell} to ptr`);
+        this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, ptr ${p})`);
     }
 
     // emite `%t = call i64 @rfn(argStr)` e devolve o temporário.
@@ -461,14 +664,17 @@ class Codegen {
         }
         return s;
     }
+    // builtin do runtime: gera cada arg como CÉLULA i64 e chama pela ABI.
     callRuntime(rfn: string, args: Expr[]): string {
-        return this.emitCall(rfn, this.argList(args));
+        let cells: string[] = [];
+        for (const a of args) { cells.push(this.genExpr(a)); }
+        return this.rtCall(rfn, cells);
     }
     // método de string com 1 arg: rfn(base, arg0).
     strMethod1(rfn: string, bv: string, args: Expr[]): string {
         let a: string = "0";
         if (args.len() >= 1) { a = this.genExpr(args[0]); }
-        return this.emitCall(rfn, `i64 ${bv}, i64 ${a}`);
+        return this.rtCall(rfn, [bv, a]);
     }
 
     // gera um arg; se o parâmetro é `any` e o valor é concreto, BOX num LexJson
@@ -478,10 +684,10 @@ class Codegen {
         if (!strEq(paramTy, "any")) { return v; }
         const at: string = this.sema.typeOf(a, this.scope);
         if (strEq(at, "any")) { return v; }                                  // já é any
-        if (strEq(at, "string")) { return this.emitCall("__lex_json_str", concat("i64 ", v)); }
-        if (strEq(at, "f64")) { return this.emitCall("__lex_json_float", concat("i64 ", v)); }
-        if (strEq(at, "bool")) { return this.emitCall("__lex_json_bool", concat("i64 ", v)); }
-        if (strEq(at, "i64")) { return this.emitCall("__lex_json_num", concat("i64 ", v)); }
+        if (strEq(at, "string")) { return this.rtCall("__lex_json_str", [v]); }
+        if (strEq(at, "f64")) { return this.rtCall("__lex_json_float", [v]); }
+        if (strEq(at, "bool")) { return this.rtCall("__lex_json_bool", [v]); }
+        if (strEq(at, "i64")) { return this.rtCall("__lex_json_num", [v]); }
         return v;                                                            // classe/array/map: best-effort sem box
     }
     // lista de args com boxing por tipo de parâmetro (ptypes[i]); "" = sem box.
@@ -515,20 +721,20 @@ class Codegen {
         const ty: string = this.sema.typeOf(a, this.scope);
         const v: string = this.genExpr(a);
         if (strEq(ty, "string")) { return v; }
-        if (isFloatTy(ty)) { return this.emitCall("__lex_f64_to_str", concat("i64 ", v)); }
-        if (strEq(ty, "any")) { return this.emitCall("__lex_json_as_str", concat("i64 ", v)); }
+        if (isFloatTy(ty)) { return this.rtCall("__lex_f64_to_str", [v]); }
+        if (strEq(ty, "any")) { return this.rtCall("__lex_json_as_str", [v]); }
         if (strEq(ty, "bool")) {
-            const j: string = this.emitCall("__lex_json_bool", concat("i64 ", v));
-            return this.emitCall("__lex_json_as_str", concat("i64 ", j));
+            const j: string = this.rtCall("__lex_json_bool", [v]);
+            return this.rtCall("__lex_json_as_str", [j]);
         }
-        return this.emitCall("__lex_i64_to_str", concat("i64 ", v));
+        return this.rtCall("__lex_i64_to_str", [v]);
     }
     // Terminal.<qualquer>(a, b, …): concatena os args (por tipo), separa por
     // espaço, imprime + \n. (Builtin de prelúdio — evita compilar std/terminal.lex;
     // sem cor/rótulos: o símbolo/bullet vem dos próprios args do chamador.)
     genTerminalPrint(args: Expr[]): string {
         if (args.len() == 0) {
-            this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, i64 ${this.genStrLit("")})`);
+            this.printfStr(this.genStrLit(""));
             return "0";
         }
         let acc: string = "";
@@ -537,12 +743,12 @@ class Codegen {
             const piece: string = this.toText(a);
             if (i == 0) { acc = piece; }
             else {
-                const sp: string = this.emitCall("__lex_concat", `i64 ${acc}, i64 ${this.genStrLit(" ")}`);
-                acc = this.emitCall("__lex_concat", `i64 ${sp}, i64 ${piece}`);
+                const sp: string = this.rtCall("__lex_concat", [acc, this.genStrLit(" ")]);
+                acc = this.rtCall("__lex_concat", [sp, piece]);
             }
             i = i + 1;
         }
-        this.emit(`  call i32 (ptr, ...) @printf(ptr @.lex_fmt_str, i64 ${acc})`);
+        this.printfStr(acc);
         return "0";
     }
 
@@ -725,30 +931,30 @@ class Codegen {
         if (strEq(m.method, "push")) {
             let v: string = "0";
             if (m.args.len() >= 1) { v = this.genExpr(m.args[0]); }
-            this.emit(`  call i64 @__lex_arr_push(i64 ${bv}, i64 ${v})`);
+            this.rtCall("__lex_arr_push", [bv, v]);
             return "0";
         }
         if (strEq(m.method, "pop")) {
-            return this.emitCall("__lex_arr_pop", concat("i64 ", bv));
+            return this.rtCall("__lex_arr_pop", [bv]);
         }
         if (strEq(m.method, "join")) {                     // string[].join(sep) → string
             let sep: string = this.genStrLit("");
             if (m.args.len() >= 1) { sep = this.genExpr(m.args[0]); }
-            return this.emitCall("__lex_arr_join", `i64 ${bv}, i64 ${sep}`);
+            return this.rtCall("__lex_arr_join", [bv, sep]);
         }
         // métodos de string (s.contains(x)/startsWith/endsWith)
         if (strEq(m.method, "contains")) { return this.strMethod1("__lex_contains", bv, m.args); }
         if (strEq(m.method, "startsWith")) { return this.strMethod1("__lex_starts_with", bv, m.args); }
         if (strEq(m.method, "endsWith")) { return this.strMethod1("__lex_ends_with", bv, m.args); }
-        if (strEq(m.method, "trim")) { return this.emitCall("__lex_trim", concat("i64 ", bv)); }
-        if (strEq(m.method, "toLower")) { return this.emitCall("__lex_to_lower", concat("i64 ", bv)); }
-        if (strEq(m.method, "toUpper")) { return this.emitCall("__lex_to_upper", concat("i64 ", bv)); }
+        if (strEq(m.method, "trim")) { return this.rtCall("__lex_trim", [bv]); }
+        if (strEq(m.method, "toLower")) { return this.rtCall("__lex_to_lower", [bv]); }
+        if (strEq(m.method, "toUpper")) { return this.rtCall("__lex_to_upper", [bv]); }
         if (strEq(m.method, "replace")) {                  // s.replace(frm, to) → string
             let frm: string = this.genStrLit("");
             let to: string = this.genStrLit("");
             if (m.args.len() >= 1) { frm = this.genExpr(m.args[0]); }
             if (m.args.len() >= 2) { to = this.genExpr(m.args[1]); }
-            return this.emitCall("__lex_str_replace", `i64 ${bv}, i64 ${frm}, i64 ${to}`);
+            return this.rtCall("__lex_str_replace", [bv, frm, to]);
         }
         // json: j.jsonSet(k, v) / j.jsonStringify()
         if (strEq(m.method, "jsonSet")) {
@@ -756,11 +962,11 @@ class Codegen {
             let v: string = "0";
             if (m.args.len() >= 1) { k = this.genExpr(m.args[0]); }
             if (m.args.len() >= 2) { v = this.boxArg(m.args[1], "any"); }
-            this.emit(`  call void @__lex_json_set(i64 ${bv}, i64 ${k}, i64 ${v})`);
+            this.rtCall("__lex_json_set", [bv, k, v]);
             return "0";
         }
         if (strEq(m.method, "jsonStringify")) {
-            return this.emitCall("__lex_json_stringify", concat("i64 ", bv));
+            return this.rtCall("__lex_json_stringify", [bv]);
         }
         // Map: m.mapSet(k, v) / m.mapGet(k)
         if (strEq(m.method, "mapSet")) {
@@ -768,25 +974,25 @@ class Codegen {
             let v: string = "0";
             if (m.args.len() >= 1) { k = this.genExpr(m.args[0]); }
             if (m.args.len() >= 2) { v = this.genExpr(m.args[1]); }
-            this.emit(`  call i64 @__lex_map_set(i64 ${bv}, i64 ${k}, i64 ${v})`);
+            this.rtCall("__lex_map_set", [bv, k, v]);
             return "0";
         }
         if (strEq(m.method, "mapGet")) {
             let k: string = "0";
             if (m.args.len() >= 1) { k = this.genExpr(m.args[0]); }
-            return this.emitCall("__lex_map_get", `i64 ${bv}, i64 ${k}`);
+            return this.rtCall("__lex_map_get", [bv, k]);
         }
         // canais de thread: ch.send(v) / ch.recv() / ch.close()
         if (strEq(m.method, "send")) {
             let v: string = "0";
             if (m.args.len() >= 1) { v = this.genExpr(m.args[0]); }
-            this.emit(`  call void @__lex_chan_send(i64 ${bv}, i64 ${v})`);
+            this.rtCall("__lex_chan_send", [bv, v]);
             return "0";
         }
-        if (strEq(m.method, "recv")) { return this.emitCall("__lex_chan_recv", concat("i64 ", bv)); }
-        if (strEq(m.method, "close")) { return this.emitCall("__lex_chan_close", concat("i64 ", bv)); }
+        if (strEq(m.method, "recv")) { return this.rtCall("__lex_chan_recv", [bv]); }
+        if (strEq(m.method, "close")) { return this.rtCall("__lex_chan_close", [bv]); }
         // memória crua: métodos em ptr — buf.free() / buf.poke*(off,v) / buf.peek*(off)
-        if (strEq(m.method, "free")) { this.emit(`  call void @__lex_free(i64 ${bv})`); return "0"; }
+        if (strEq(m.method, "free")) { this.rtCall("__lex_free", [bv]); return "0"; }
         const pk: string = ptrPoke(m.method);
         if (!strEq(pk, "")) {
             let o: string = "0";
@@ -807,10 +1013,10 @@ class Codegen {
 
     // [a, b, c] → arr_new(n) + arr_push por item; devolve o ponteiro do array.
     genArrayLit(a: ArrayLit): string {
-        const arr: string = this.emitCall("__lex_arr_new", concat("i64 ", str(a.items.len())));
+        const arr: string = this.rtCall("__lex_arr_new", [str(a.items.len())]);
         for (const it of a.items) {
             const v: string = this.genExpr(it);
-            this.emit(`  call i64 @__lex_arr_push(i64 ${arr}, i64 ${v})`);
+            this.rtCall("__lex_arr_push", [arr, v]);
         }
         return arr;
     }
@@ -818,12 +1024,12 @@ class Codegen {
     // { chave: v, … } (chaves identificadoras) → literal `json`: cria o objeto e
     // seta cada campo com o valor EMBRULHADO por tipo (string→jsonStr, i64→jsonNum…).
     genStructLit(sl: StructLit): string {
-        const obj: string = this.emitCall("__lex_json_object", "");
+        const obj: string = this.rtCall("__lex_json_object", []);
         let i: i64 = 0;
         while (i < sl.fields.len()) {
             const k: string = this.genStrLit(sl.fields[i]);
             const v: string = this.boxArg(sl.vals[i], "any");
-            this.emit(`  call void @__lex_json_set(i64 ${obj}, i64 ${k}, i64 ${v})`);
+            this.rtCall("__lex_json_set", [obj, k, v]);
             i = i + 1;
         }
         return obj;
@@ -831,12 +1037,12 @@ class Codegen {
 
     // {} / {"k": v, …} → map_new + map_set por entrada; devolve o ponteiro do map.
     genMapLit(ml: MapLit): string {
-        const m: string = this.emitCall("__lex_map_new", "");
+        const m: string = this.rtCall("__lex_map_new", []);
         let i: i64 = 0;
         while (i < ml.mapKeys.len()) {
             const k: string = this.genStrLit(ml.mapKeys[i]);
             const v: string = this.genExpr(ml.vals[i]);
-            this.emit(`  call i64 @__lex_map_set(i64 ${m}, i64 ${k}, i64 ${v})`);
+            this.rtCall("__lex_map_set", [m, k, v]);
             i = i + 1;
         }
         return m;
@@ -902,7 +1108,7 @@ class Codegen {
     // new C(args): aloca nslots*8 bytes, grava a tag no slot 0, chama o constructor.
     genNew(ne: NewExpr): string {
         const ci: ClassInfo = this.sema.classes.find(ne.cls);
-        const obj: string = this.emitCall("__lex_alloc", concat("i64 ", str(ci.nslots * 8)));
+        const obj: string = this.rtCall("__lex_alloc", [str(ci.nslots * 8)]);
         const p: string = this.newTmp();
         this.emit(`  ${p} = inttoptr i64 ${obj} to ptr`);
         this.emit(`  store i64 ${ci.tag}, ptr ${p}`);
@@ -953,7 +1159,7 @@ class Codegen {
     // ── statements (devolvem i64 dummy p/ caberem no match-expressão) ────────
     storeVar(name: string, v: string): i64 {
         if (this.isGlobalVar(name)) {
-            this.emit(`  call i64 @__lex_gset(i64 ${this.slotOfGlobal(name)}, i64 ${v})`);
+            this.rtCall("__lex_gset", [str(this.slotOfGlobal(name)), v]);
             return 0;
         }
         this.emit(`  store i64 ${v}, ptr ${this.varAddrOf(name)}`);
@@ -1008,7 +1214,7 @@ class Codegen {
     // fail expr: seta o flag de erro com o valor e sai da função (sentinela 0).
     genFail(fs: FailStmt): i64 {
         const v: string = this.genExpr(fs.value);
-        this.emit(`  call i64 @__lex_set_err(i64 ${v})`);
+        this.rtCall("__lex_set_err", [v]);
         this.emitReturnVal("0");
         return 0;
     }
@@ -1089,13 +1295,13 @@ class Codegen {
         this.label(lcond);
         const iv: string = this.newTmp();
         this.emit(`  ${iv} = load i64, ptr ${ia}`);
-        const nv: string = this.emitCall("__lex_arr_len", concat("i64 ", iter));
+        const nv: string = this.rtCall("__lex_arr_len", [iter]);
         const cb: string = this.newTmp();
         this.emit(`  ${cb} = icmp slt i64 ${iv}, ${nv}`);
         this.emit(`  br i1 ${cb}, label %${lbody}, label %${lend}`); this.term = true;
 
         this.label(lbody);
-        const ev: string = this.emitCall("__lex_arr_get", `i64 ${iter}, i64 ${iv}`);
+        const ev: string = this.rtCall("__lex_arr_get", [iter, iv]);
         this.emit(`  store i64 ${ev}, ptr ${xa}`);
         this.loopCond.push(lcond);
         this.loopEnd.push(lend);
@@ -1191,7 +1397,7 @@ class Codegen {
         this.matchN = this.matchN + 1;
         let argp: string = "null";
         if (c.args.len() > 0) {
-            const argi: string = this.emitCall("malloc", concat("i64 ", str(c.args.len() * 8)));
+            const argi: string = this.rtCall("malloc", [str(c.args.len() * 8)]);
             const p: string = this.newTmp();
             this.emit(`  ${p} = inttoptr i64 ${argi} to ptr`);
             let i: i64 = 0;
@@ -1256,7 +1462,7 @@ class Codegen {
         if (n > 0) {
             const argi: string = this.newTmp();
             this.emit(`  ${argi} = ptrtoint ptr %argp to i64`);
-            this.emit(`  call void @free(i64 ${argi})`);
+            this.rtCall("free", [argi]);
         }
         const r: string = this.emitCall(fnName, argStr);
         const rp: string = this.newTmp();
@@ -1275,7 +1481,7 @@ class Codegen {
         this.matchN = this.matchN + 1;
         const lprop: string = concat("Ltprop", str(id));
         const lok: string = concat("Ltok", str(id));
-        const has: string = this.emitCall("__lex_has_err", "");
+        const has: string = this.rtCall("__lex_has_err", []);
         const cb: string = this.newTmp();
         this.emit(`  ${cb} = icmp ne i64 ${has}, 0`);
         this.emit(`  br i1 ${cb}, label %${lprop}, label %${lok}`);
@@ -1295,13 +1501,13 @@ class Codegen {
         this.emit(`  store i64 ${v}, ptr ${ra}`);
         const lcatch: string = concat("Lcatch", str(id));
         const lok: string = concat("Lcok", str(id));
-        const has: string = this.emitCall("__lex_has_err", "");
+        const has: string = this.rtCall("__lex_has_err", []);
         const cb: string = this.newTmp();
         this.emit(`  ${cb} = icmp ne i64 ${has}, 0`);
         this.emit(`  br i1 ${cb}, label %${lcatch}, label %${lok}`);
         this.term = true;
         this.label(lcatch);
-        this.emit(`  call i64 @__lex_take_err()`);   // consome/limpa o erro
+        this.rtCall("__lex_take_err", []);   // consome/limpa o erro
         const h: string = this.genExpr(c.handler);
         this.emit(`  store i64 ${h}, ptr ${ra}`);
         this.emit(`  br label %${lok}`);
@@ -1330,7 +1536,7 @@ class Codegen {
         }
         if (arm.kind == 2) {                                  // literal string
             const sp: string = this.genStrLit(arm.pat);
-            const eq: string = this.emitCall("__lex_str_eq", `i64 ${subj}, i64 ${sp}`);
+            const eq: string = this.rtCall("__lex_str_eq", [subj, sp]);
             const cb: string = this.newTmp();
             this.emit(`  ${cb} = icmp ne i64 ${eq}, 0`);
             return cb;
@@ -1518,94 +1724,22 @@ class Codegen {
             }
             if (fl.isAsync) { addUniq(this.asyncNames, fl.name); }   // chamada → spawn
         }
-        // preâmbulo: formatos de print + printf + declarações do runtime (__lex_*).
-        // Tudo trafega i64 (ponteiros como inteiros); as funções void do runtime
-        // (arr_push/set, map_set) são declaradas i64 e o retorno é ignorado.
+        // preâmbulo. As declarações do runtime saem da TABELA DE ABI (rtAbi): tipos
+        // certos p/ ponteiro e void — é o que faz o mesmo .ll servir no nativo (ptr
+        // = 64 bits) E no wasm32 (ptr = 32 bits). Os valores em lex seguem células
+        // i64; a conversão acontece só na borda da chamada (ver rtCall).
+        if (this.target == 1) {                          // wasm32
+            this.raw("target triple = \"wasm32-unknown-unknown\"");
+            this.raw("target datalayout = \"e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-n32:64-S128\"");
+        }
         this.raw("@.lex_fmt_int = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\"");
         this.raw("@.lex_fmt_str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"");
         this.raw("declare i32 @printf(ptr, ...)");
-        this.raw("declare i64 @__lex_concat(i64, i64)");
-        this.raw("declare i64 @__lex_strlen(i64)");
-        this.raw("declare i64 @__lex_str_eq(i64, i64)");
-        this.raw("declare i64 @__lex_contains(i64, i64)");
-        this.raw("declare i64 @__lex_starts_with(i64, i64)");
-        this.raw("declare i64 @__lex_ends_with(i64, i64)");
-        this.raw("declare i64 @__lex_substring(i64, i64, i64)");
-        this.raw("declare i64 @__lex_char_at(i64, i64)");
-        this.raw("declare i64 @__lex_i64_to_str(i64)");
-        this.raw("declare i64 @__lex_f64_to_str(i64)");
-        this.raw("declare i64 @__lex_parse_int(i64)");
-        this.raw("declare i64 @__lex_parse_float(i64)");
-        this.raw("declare i64 @__lex_peek8(i64, i64)");
-        this.raw("declare i64 @__lex_arr_new(i64)");
-        this.raw("declare i64 @__lex_arr_len(i64)");
-        this.raw("declare i64 @__lex_arr_push(i64, i64)");
-        this.raw("declare i64 @__lex_arr_pop(i64)");
-        this.raw("declare i64 @__lex_arr_join(i64, i64)");
-        // threads/canais (spawn/async/await): malloc/free libc, pthread, chan
-        this.raw("declare i64 @malloc(i64)");
-        this.raw("declare void @free(i64)");
+        for (const sym of rtSymbols()) { this.raw(this.rtDecl(sym)); }
+        // threads (só nativo; no wasm o spawn precisaria do host)
         this.raw("declare i32 @pthread_create(ptr, ptr, ptr, ptr)");
         this.raw("declare i32 @pthread_join(i64, ptr)");
         this.raw("declare i32 @pthread_detach(i64)");
-        this.raw("declare i64 @__lex_chan_new()");
-        this.raw("declare void @__lex_chan_send(i64, i64)");
-        this.raw("declare i64 @__lex_chan_recv(i64)");
-        this.raw("declare i64 @__lex_chan_close(i64)");
-        this.raw("declare i64 @__lex_set_err(i64)");
-        this.raw("declare i64 @__lex_has_err()");
-        this.raw("declare i64 @__lex_take_err()");
-        this.raw("declare i64 @__lex_trim(i64)");
-        this.raw("declare i64 @__lex_to_lower(i64)");
-        this.raw("declare i64 @__lex_to_upper(i64)");
-        this.raw("declare i64 @__lex_str_replace(i64, i64, i64)");
-        this.raw("declare i64 @__lex_arr_get(i64, i64)");
-        this.raw("declare i64 @__lex_arr_set(i64, i64, i64)");
-        this.raw("declare i64 @__lex_map_new()");
-        this.raw("declare i64 @__lex_map_get(i64, i64)");
-        this.raw("declare i64 @__lex_map_set(i64, i64, i64)");
-        this.raw("declare i64 @__lex_map_len(i64)");
-        this.raw("declare i64 @__lex_alloc(i64)");
-        this.raw("declare i64 @__lex_heap_alloc(i64)");
-        this.raw("declare void @__lex_free(i64)");
-        this.raw("declare void @__lex_poke8(i64, i64, i64)");
-        this.raw("declare void @__lex_poke16(i64, i64, i64)");
-        this.raw("declare void @__lex_poke32(i64, i64, i64)");
-        this.raw("declare void @__lex_poke64(i64, i64, i64)");
-        this.raw("declare i64 @__lex_peek16(i64, i64)");
-        this.raw("declare i64 @__lex_peek32(i64, i64)");
-        this.raw("declare i64 @__lex_peek64(i64, i64)");
-        this.raw("declare i64 @__lex_fs_read(i64)");
-        this.raw("declare i64 @__lex_fs_write(i64, i64)");
-        this.raw("declare i64 @__lex_fs_exists(i64)");
-        this.raw("declare i64 @__lex_read_stdin(i64)");
-        this.raw("declare i64 @__lex_system(i64)");
-        this.raw("declare i64 @__lex_args()");
-        this.raw("declare i64 @__lex_json_num(i64)");
-        this.raw("declare i64 @__lex_json_float(i64)");
-        this.raw("declare i64 @__lex_json_str(i64)");
-        this.raw("declare i64 @__lex_json_bool(i64)");
-        this.raw("declare i64 @__lex_json_eq(i64, i64)");
-        this.raw("declare i64 @__lex_json_as_int(i64)");
-        this.raw("declare i64 @__lex_json_as_float(i64)");
-        this.raw("declare i64 @__lex_json_as_str(i64)");
-        this.raw("declare i64 @__lex_json_stringify(i64)");
-        this.raw("declare i64 @__lex_json_object()");
-        this.raw("declare void @__lex_json_set(i64, i64, i64)");
-        this.raw("declare i64 @__lex_gget(i64)");
-        this.raw("declare i64 @__lex_gset(i64, i64)");
-        this.raw("declare i64 @__lex_f_abs(i64)");
-        this.raw("declare i64 @__lex_f_sqrt(i64)");
-        this.raw("declare i64 @__lex_f_pow(i64, i64)");
-        this.raw("declare i64 @__lex_f_floor(i64)");
-        this.raw("declare i64 @__lex_f_ceil(i64)");
-        this.raw("declare i64 @__lex_f_round(i64)");
-        this.raw("declare i64 @__lex_f_sin(i64)");
-        this.raw("declare i64 @__lex_f_cos(i64)");
-        this.raw("declare i64 @__lex_f_tan(i64)");
-        this.raw("declare i64 @__lex_f_exp(i64)");
-        this.raw("declare i64 @__lex_f_ln(i64)");
-        this.raw("declare i64 @__lex_f_log10(i64)");
         this.raw("");
         // métodos de classe (dispatch estático): @Classe.metodo(i64 %this, …)
         for (const c of prog.classes) {
@@ -1627,13 +1761,15 @@ class Codegen {
     }
 }
 
-// Program já parseado → texto do LLVM IR (usado pelo driver multi-arquivo).
-fn compileProgramToIR(prog: Program): string {
+// Program já parseado → texto do LLVM IR. `target`: 0 = nativo, 1 = wasm32.
+fn compileProgramToIRT(prog: Program, target: i64): string {
     const sema: Sema = new Sema(prog);
     const cg: Codegen = new Codegen(sema);
+    cg.target = target;
     cg.genProgram(prog);
     return cg.outParts.join("");   // junta toda a IR de uma vez (StrBuf O(n))
 }
+fn compileProgramToIR(prog: Program): string { return compileProgramToIRT(prog, 0); }
 
 // Conveniência: fonte lex (um módulo) → texto do LLVM IR.
 fn compileToIR(src: string): string {
