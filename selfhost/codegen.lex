@@ -28,7 +28,7 @@ import {
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, FailStmt, DeferStmt, Func, Param, Program, Parser
 } from "./parser"
-import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, elementTy, addUniq, idxOf, without } from "./sema"
+import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, isFloatTy, baseName, elementTy, addUniq, idxOf, without } from "./sema"
 
 fn boolLit(b: bool): string {
     if (b) { return "1"; }
@@ -323,7 +323,7 @@ class Codegen {
         // aritmética/comparação f64: se qualquer operando é f64, vai pro caminho float.
         const lt: string = this.sema.typeOf(b.lhs, this.scope);
         const rt: string = this.sema.typeOf(b.rhs, this.scope);
-        if (strEq(lt, "f64") || strEq(rt, "f64")) { return this.genFloatBin(b, lt, rt); }
+        if (isFloatTy(lt) || isFloatTy(rt)) { return this.genFloatBin(b, lt, rt); }
         const l: string = this.genExpr(b.lhs);
         const r: string = this.genExpr(b.rhs);
         const op: Tok = b.op;
@@ -354,7 +354,7 @@ class Codegen {
     // um i64 numérico vira double via sitofp (permite misturar int e float).
     toDouble(v: string, ty: string): string {
         const t: string = this.newTmp();
-        if (strEq(ty, "f64")) { this.emit(`  ${t} = bitcast i64 ${v} to double`); }
+        if (isFloatTy(ty)) { this.emit(`  ${t} = bitcast i64 ${v} to double`); }
         else { this.emit(`  ${t} = sitofp i64 ${v} to double`); }
         return t;
     }
@@ -404,11 +404,22 @@ class Codegen {
 
     // template `...${e}...` → cadeia de concat; cada interpolação é convertida a
     // string conforme o tipo (string como está; f64 via f64_to_str; resto i64_to_str).
+    // bool → "true"/"false" (select entre dois literais; sem runtime dedicado).
+    boolToStr(v: string): string {
+        const t: string = this.genStrLit("true");
+        const f: string = this.genStrLit("false");
+        const c: string = this.newTmp();
+        this.emit(`  ${c} = icmp ne i64 ${v}, 0`);
+        const r: string = this.newTmp();
+        this.emit(`  ${r} = select i1 ${c}, i64 ${t}, i64 ${f}`);
+        return r;
+    }
     tplPart(e: Expr): string {
         const ty: string = this.sema.typeOf(e, this.scope);
         const v: string = this.genExpr(e);
         if (strEq(ty, "string")) { return v; }
-        if (strEq(ty, "f64")) { return this.emitCall("__lex_f64_to_str", concat("i64 ", v)); }
+        if (isFloatTy(ty)) { return this.emitCall("__lex_f64_to_str", concat("i64 ", v)); }
+        if (strEq(ty, "bool")) { return this.boolToStr(v); }
         return this.emitCall("__lex_i64_to_str", concat("i64 ", v));
     }
     genTemplate(t: Template): string {
@@ -504,7 +515,7 @@ class Codegen {
         const ty: string = this.sema.typeOf(a, this.scope);
         const v: string = this.genExpr(a);
         if (strEq(ty, "string")) { return v; }
-        if (strEq(ty, "f64")) { return this.emitCall("__lex_f64_to_str", concat("i64 ", v)); }
+        if (isFloatTy(ty)) { return this.emitCall("__lex_f64_to_str", concat("i64 ", v)); }
         if (strEq(ty, "any")) { return this.emitCall("__lex_json_as_str", concat("i64 ", v)); }
         if (strEq(ty, "bool")) {
             const j: string = this.emitCall("__lex_json_bool", concat("i64 ", v));
@@ -565,7 +576,7 @@ class Codegen {
         const b: string = this.genExpr(c.args[1]);
         const wantMin: bool = strEq(c.name, "min");
         const cb: string = this.newTmp();
-        if (strEq(lt, "f64") || strEq(rt, "f64")) {
+        if (isFloatTy(lt) || isFloatTy(rt)) {
             const ad: string = this.toDouble(a, lt);
             const bd: string = this.toDouble(b, rt);
             let pred: string = "ogt";
@@ -686,6 +697,20 @@ class Codegen {
             if (m.args.len() >= 1) { frm = this.genExpr(m.args[0]); }
             if (m.args.len() >= 2) { to = this.genExpr(m.args[1]); }
             return this.emitCall("__lex_str_replace", `i64 ${bv}, i64 ${frm}, i64 ${to}`);
+        }
+        // Map: m.mapSet(k, v) / m.mapGet(k)
+        if (strEq(m.method, "mapSet")) {
+            let k: string = "0";
+            let v: string = "0";
+            if (m.args.len() >= 1) { k = this.genExpr(m.args[0]); }
+            if (m.args.len() >= 2) { v = this.genExpr(m.args[1]); }
+            this.emit(`  call i64 @__lex_map_set(i64 ${bv}, i64 ${k}, i64 ${v})`);
+            return "0";
+        }
+        if (strEq(m.method, "mapGet")) {
+            let k: string = "0";
+            if (m.args.len() >= 1) { k = this.genExpr(m.args[0]); }
+            return this.emitCall("__lex_map_get", `i64 ${bv}, i64 ${k}`);
         }
         // canais de thread: ch.send(v) / ch.recv() / ch.close()
         if (strEq(m.method, "send")) {

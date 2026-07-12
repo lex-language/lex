@@ -282,6 +282,14 @@ fn isFunctionType(ty: string): bool {
     }
     return false;
 }
+// nome de uma expressão Var, ou "" (p/ detectar `Classe.metodo()` estático).
+fn exprVarName(e: Expr): string {
+    return match (e) { Var v => v.name, _ => "" };
+}
+// f32 é promovido a f64 nos cálculos/saída (o modelo do runtime só tem double).
+fn isFloatTy(ty: string): bool {
+    return strEq(ty, "f64") || strEq(ty, "f32");
+}
 // nome-base de um tipo: tira os args genéricos ("Pilha<i64>" → "Pilha"). O type
 // erasure faz `Pilha<i64>` e `Pilha<string>` compartilharem a MESMA classe.
 fn baseName(ty: string): string {
@@ -459,8 +467,8 @@ class Sema {
             || op == Tok.Le || op == Tok.Ge || op == Tok.AmpAmp || op == Tok.PipePipe) {
             return "bool";
         }
-        if (strEq(this.typeOf(b.lhs, scope), "f64")) { return "f64"; }
-        if (strEq(this.typeOf(b.rhs, scope), "f64")) { return "f64"; }
+        if (isFloatTy(this.typeOf(b.lhs, scope))) { return "f64"; }
+        if (isFloatTy(this.typeOf(b.rhs, scope))) { return "f64"; }
         return "i64";
     }
 
@@ -488,6 +496,11 @@ class Sema {
     }
 
     typeMethodCall(m: MethodCall, scope: Scope): string {
+        // método ESTÁTICO: a base é o NOME de uma classe, não uma variável.
+        const sbn: string = exprVarName(m.base);
+        if (!strEq(sbn, "") && strEq(scope.get(sbn), "?") && this.classes.findInfo(sbn) >= 0) {
+            return this.methodRet(sbn, m.method);
+        }
         const bt: string = this.typeOf(m.base, scope);
         if (strEq(m.method, "len")) { return "i64"; }
         if (strEq(m.method, "push")) { return "void"; }
