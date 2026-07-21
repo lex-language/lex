@@ -1,4 +1,4 @@
-# CI do lex — o compilador é escrito EM LEX (não há mais Rust no repo).
+# CI do lex — o compilador é escrito EM LEX.
 #
 # O bootstrap parte da SEMENTE (`src/lex-seed.ll.gz`, o LLVM IR do próprio
 # compilador no ponto-fixo): clang a transforma em `bin/lex`, e a partir daí o lex
@@ -43,16 +43,30 @@ jobs:
 
       - name: check (tipos/sintaxe) sem falso-positivo no próprio repo
         run: |
-          for f in src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex src/examples/*.lex; do
+          for f in src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex \
+                   src/tests/fixtures/*.lsx examples/*.lex \
+                   docs/*.lex docs/pages/*.lex web/*.lsx; do
             out=$(./bin/lex check "$f")
             [ "$out" = "[]" ] || { echo "diagnóstico inesperado em $f: $out"; exit 1; }
           done
 
       - name: fmt --check
-        run: ./bin/lex fmt --check src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex
+        run: |
+          ./bin/lex fmt --check src/*.lex src/compiler/*.lex src/tools/*.lex src/std/*.lex
+          # .lsx: só o frontmatter é formatado (no corpo o espaço é conteúdo)
+          ./bin/lex fmt --check src/tests/fixtures/*.lsx web/*.lsx docs/*.lex docs/pages/*.lex
 
       - name: exemplo.lex compila e roda
-        run: ./bin/lex run src/examples/exemplo.lex
+        run: ./bin/lex run examples/exemplo.lex
 
       - name: alvo wasm32
-        run: ./bin/lex build src/examples/exemplo.lex --target wasm -o /tmp/exemplo.wasm
+        run: ./bin/lex build examples/exemplo.lex --target wasm -o /tmp/exemplo.wasm
+
+      # As ilhas: o mesmo .lsx tem de sair como HTML no servidor E como módulo
+      # wasm com o export de hidratação. O teste dirige um DOM falso no Node e
+      # simula um clique — é o que prova a ponte closure→tabela de funções.
+      - name: ilhas (.lsx) — SSR + hidratação no wasm
+        run: |
+          ./bin/lex run web/Pagina.lsx | grep -q '<lsx-island data-c="Contador">'
+          ./bin/lex build web/Pagina.lsx --target wasm -o /tmp/pagina.wasm
+          node web/island-check.mjs /tmp/pagina.wasm

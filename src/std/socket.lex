@@ -16,6 +16,7 @@ declare function setsockopt(fd: i64, level: i64, opt: i64, val: ptr, len: i64): 
 declare function bind(fd: i64, addr: ptr, len: i64): i64;
 declare function listen(fd: i64, backlog: i64): i64;
 declare function accept(fd: i64, addr: ptr, len: ptr): i64;
+declare function connect(fd: i64, addr: ptr, len: i64): i64;
 // monta a sockaddr_in no layout do SO alvo (a runtime resolve macOS vs Linux)
 declare function lex_sockaddr_in(port: i64): ptr;
 
@@ -50,4 +51,31 @@ function lexListen(port: i64): i64 {
 
 function lexAccept(fd: i64): i64 {
     return accept(fd, 0, 0);
+}
+
+// --- cliente TCP -----------------------------------------------------------
+
+// conecta em `ip` (IPv4 pontilhado, ex. "127.0.0.1") na porta `port`.
+// Devolve o fd conectado, ou -1 em falha. Layout sockaddr_in macOS/BSD (16 B);
+// `alloc` já zera, então bytes 8..15 (padding) ficam 0.
+function lexConnect(ip: string, port: i64): i64 {
+    const fd: i64 = socket(2, 1, 0);   // AF_INET, SOCK_STREAM
+    if (fd < 0) { return 0 - 1; }
+    const addr: ptr = alloc(16);
+    poke8(addr, 0, 16);                 // sin_len (macOS)
+    poke8(addr, 1, 2);                  // sin_family = AF_INET
+    poke8(addr, 2, (port >> 8) & 255);  // sin_port big-endian
+    poke8(addr, 3, port & 255);
+    // sin_addr: os 4 octetos, na ordem de rede (= ordem escrita)
+    const parts: string[] = split(ip, ".");
+    poke8(addr, 4, parseInt(parts[0]) & 255);
+    poke8(addr, 5, parseInt(parts[1]) & 255);
+    poke8(addr, 6, parseInt(parts[2]) & 255);
+    poke8(addr, 7, parseInt(parts[3]) & 255);
+    if (connect(fd, addr, 16) < 0) {
+        free(addr);
+        return 0 - 1;
+    }
+    free(addr);
+    return fd;
 }

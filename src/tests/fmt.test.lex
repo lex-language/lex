@@ -54,3 +54,61 @@ describe("fmt: idempotência", () => {
                 expect(formatSource(once)).toBe(once);
         });
 });
+
+describe("fmt: fn inline não é permitida", () => {
+        test("quebra corpo de um statement", () => {
+                expect(formatSource("fn dl(): string { return \"$\"; }"))
+                .toBe("fn dl(): string {\n    return \"$\";\n}\n");
+        });
+
+        test("quebra corpo de vários statements", () => {
+                expect(formatSource("fn f(): i64 { let a: i64 = 1; return a; }"))
+                .toBe("fn f(): i64 {\n    let a: i64 = 1;\n    return a;\n}\n");
+        });
+
+        test("não quebra no ';' dentro de string", () => {
+                expect(formatSource("fn s(): string { return \"a;b\"; }"))
+                .toBe("fn s(): string {\n    return \"a;b\";\n}\n");
+        });
+
+        test("bloco aninhado fica junto do statement", () => {
+                expect(formatSource("fn f() { if (a) { x(); } return 1; }"))
+                .toBe("fn f() {\n    if (a) { x(); }\n    return 1;\n}\n");
+        });
+
+        test("comentário no fim sobra com o '}'", () => {
+                expect(formatSource("fn f(): i64 { return 7070; }  // porta"))
+                .toBe("fn f(): i64 {\n    return 7070;\n}  // porta\n");
+        });
+
+        test("corpo vazio e não-fn ficam como estão", () => {
+                expect(formatSource("fn f() {}")).toBe("fn f() {}\n");
+                expect(formatSource("if (a) { x(); }")).toBe("if (a) { x(); }\n");
+        });
+
+        test("statement sem ';' final também quebra", () => {
+                expect(formatSource("fn f(): i64 { return 1 }"))
+                .toBe("fn f(): i64 {\n    return 1\n}\n");
+        });
+
+        test("idempotente", () => {
+                const once: string = formatSource("fn f(): i64 { let a: i64 = 1; return a; }");
+                expect(formatSource(once)).toBe(once);
+        });
+
+        test("} else { não é cortado", () => {
+                expect(formatSource("fn f(): i64 { if (a) { return 1; } else { return 2; } }"))
+                .toBe("fn f(): i64 {\n    if (a) { return 1; } else { return 2; }\n}\n");
+        });
+
+        test("';' do for(;;) não conta", () => {
+                expect(formatSource("fn f() { for (let i: i64 = 0; i < 3; i = i + 1) { x(); } y(); }"))
+                .toBe("fn f() {\n    for (let i: i64 = 0; i < 3; i = i + 1) { x(); }\n    y();\n}\n");
+        });
+
+        test("fn já quebrada não muda", () => {
+                const src: string = "fn f(): i64 {\n    return 1;\n}\n";
+                expect(formatSource(src)).toBe(src);
+        });
+
+});

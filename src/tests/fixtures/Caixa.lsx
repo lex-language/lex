@@ -1,0 +1,8 @@
+---
+import { Selo } from "./Selo.lsx"
+class Props {
+    titulo: string
+}
+const sufixo: string = "!";
+---
+<div><h2>{props.titulo}{sufixo}</h2><Selo texto="n" n={7} /></div>

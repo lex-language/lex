@@ -1,6 +1,6 @@
 // sema.lex — análise estrutural do lex, escrita em lex (Fase F6.2).
 //
-// Espelha o modelo de objeto de src/codegen.rs: cada objeto é um bloco de slots
+// Define o modelo de objeto usado pelo codegen: cada objeto é um bloco de slots
 // i64; o slot 0 é o ponteiro de vtable, os slots 1..n são os campos. Subclasse é
 // layout-compatível com a superclasse (campos do pai PRIMEIRO, mesmos slots), e a
 // vtable do filho começa como a do pai (override mantém o índice).
@@ -17,7 +17,7 @@ import { Program, ClassDecl, ClassField, Func, Param, EnumDecl, Parser } from ".
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call, ArrayLit,
     Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, MatchArm, Lambda,
-    TryExpr, CatchExpr, SpawnExpr, AwaitExpr
+    TryExpr, CatchExpr, SpawnExpr, AwaitExpr, ElementExpr
 } from "./parser"
 import {
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, ForOfStmt, ForStmt, ExprStmt,
@@ -273,8 +273,12 @@ class EnumTable {
 }
 
 // ── dump (S-expression) p/ os testes ─────────────────────────────────────────
-fn dumpField(f: FieldInfo): string { return `(field ${f.name} ${f.ty} ${f.slot})`; }
-fn dumpMethod(m: MethodInfo): string { return `(method ${m.name} ${m.vindex} ${m.owner})`; }
+fn dumpField(f: FieldInfo): string {
+    return `(field ${f.name} ${f.ty} ${f.slot})`;
+}
+fn dumpMethod(m: MethodInfo): string {
+    return `(method ${m.name} ${m.vindex} ${m.owner})`;
+}
 fn dumpClass(ci: ClassInfo): string {
     let par: string = "_";
     if (!strEq(ci.parent, "")) { par = ci.parent; }
@@ -404,7 +408,28 @@ fn isClassTy(ty: string): bool {
 }
 
 // retorno de um builtin chamado por função `f(...)`; "" = não é builtin.
+// `Html` é um tipo FANTASMA: mesma representação de `string` (um char*), nome
+// diferente só no sistema de tipos. É ele que separa "texto do usuário" de
+// "markup já pronto" — o corpo de um .lsx escapa tudo que não for Html.
+// Custo em runtime: zero.
+fn isHtmlTy(t: string): bool {
+    return strEq(t, "Html");
+}
+
 fn builtinFnRet(name: string): string {
+    // `html(s)` — a saída de emergência: promete que `s` JÁ é markup e não deve
+    // ser escapado. Identidade em runtime (o codegen nem emite chamada).
+    if (strEq(name, "html")) { return "Html"; }
+    // DOM (ilhas): um nó é handle i64. Sem estas entradas o typeOf devolveria
+    // "?" e o tplPart escolheria a conversão errada ao interpolar.
+    if (strEq(name, "domQuery")) { return "i64"; }
+    if (strEq(name, "domCreate")) { return "i64"; }
+    if (strEq(name, "domSetText")) { return "void"; }
+    if (strEq(name, "domSetHtml")) { return "void"; }
+    if (strEq(name, "domSetAttr")) { return "void"; }
+    if (strEq(name, "domGetAttr")) { return "string"; }
+    if (strEq(name, "domAppend")) { return "void"; }
+    if (strEq(name, "domOn")) { return "void"; }
     if (strEq(name, "len")) { return "i64"; }
     if (strEq(name, "concat")) { return "string"; }
     if (strEq(name, "charAt")) { return "string"; }
@@ -594,6 +619,7 @@ class Sema {
             SpawnExpr s => "i64",                       // handle de thread (Future)
             AwaitExpr a => this.typeAwait(a, scope),    // await Future<T> → T
             StructLit sl => "any",                      // literal json
+            ElementExpr el => "Html",                   // <Card/> → Card(…): Html
             _ => "?"
         };
     }
@@ -771,12 +797,18 @@ fn declStmt(s: Stmt, names: string[]): i64 {
         _ => 0
     };
 }
-fn declForOf(fo: ForOfStmt, names: string[]): i64 { addUniq(names, fo.name); return declStmts(fo.body, names); }
+fn declForOf(fo: ForOfStmt, names: string[]): i64 {
+    addUniq(names, fo.name);
+    return declStmts(fo.body, names);
+}
 fn declForC(fr: ForStmt, names: string[]): i64 {
     if (fr.hasInit) { declStmt(fr.init, names); }
     return declStmts(fr.body, names);
 }
-fn declIf(f: IfStmt, names: string[]): i64 { declStmts(f.thenB, names); return declStmts(f.elseB, names); }
+fn declIf(f: IfStmt, names: string[]): i64 {
+    declStmts(f.thenB, names);
+    return declStmts(f.elseB, names);
+}
 
 // ── walk de checagem: cada Var fora de `defined` vira um diagnóstico ──────────
 fn checkVar(v: Var, defined: string[], diags: Diag[]): i64 {
@@ -803,6 +835,14 @@ fn checkMatch(mt: Match, defined: string[], diags: Diag[]): i64 {
     for (const a of mt.arms) { addUniq(defined, a.bind); checkExpr(a.body, defined, diags); }
     return 0;
 }
+// `<Card x={v}>{w}</Card>` — v e w são expressões de verdade e precisam da
+// mesma checagem de variável indefinida que qualquer argumento.
+fn checkElemVars(el: ElementExpr, defined: string[], diags: Diag[]): i64 {
+    checkExprs(el.vals, defined, diags);
+    if (el.hasKids) { checkExpr(el.children, defined, diags); }
+    return 0;
+}
+
 fn checkExpr(e: Expr, defined: string[], diags: Diag[]): i64 {
     return match (e) {
         Var v => checkVar(v, defined, diags),
@@ -818,6 +858,7 @@ fn checkExpr(e: Expr, defined: string[], diags: Diag[]): i64 {
         NewExpr ne => checkExprs(ne.args, defined, diags),
         Template t => checkExprs(t.parts, defined, diags),
         Match mt => checkMatch(mt, defined, diags),
+        ElementExpr el => checkElemVars(el, defined, diags),
         _ => 0
     };
 }

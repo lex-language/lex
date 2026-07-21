@@ -1,9 +1,9 @@
-// diag.lex — diagnósticos estilo rustc em lex (Fase F6.11), espelha src/diag.rs.
+// diag.lex — diagnósticos ricos em lex (Fase F6.11).
 // Renderiza um span (índices de byte no fonte) como uma mensagem de erro com
 // cabeçalho, `--> arquivo:linha:coluna`, gutter `|`, o trecho da linha e `^^^`
-// sob o ponto do erro (com expansão de tab p/ alinhar). Sem cor (o caminho
-// não-TTY do diag.rs) — assim a saída é determinística e testável. `hint` vazio
-// = sem linha de ajuda. Índices/colunas são por BYTE (correto p/ ASCII).
+// sob o ponto do erro (com expansão de tab p/ alinhar). Sem cor — assim a saída
+// é determinística e testável. `hint` vazio = sem linha de ajuda.
+// Índices/colunas são por BYTE (correto p/ ASCII).
 
 fn repeatStr(unit: string, k: i64): string {
     let s: string = "";

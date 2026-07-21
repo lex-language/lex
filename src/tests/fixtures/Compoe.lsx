@@ -1,0 +1,7 @@
+---
+import { Escapa } from "./Escapa.lsx"
+class Props {
+    perigo: string
+}
+---
+<ul><Escapa texto={props.perigo} bruto="<b>ok</b>" /></ul>

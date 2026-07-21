@@ -1,6 +1,6 @@
 // lexcli.lex — driver unificado do lex, escrito em lex. Junta num único binário
-// os subcomandos já portados (compilar/rodar/formatar), rumo a substituir o
-// `lex` de produção (src/main.rs). Cada subcomando delega a um módulo self-hosted.
+// os subcomandos do `lex` de produção. Cada subcomando delega a um módulo
+// self-hosted.
 //
 //   lex build <arquivo.lex> [-o saida]   compila → binário nativo (linka runtime.c)
 //   lex run <arquivo.lex>                 compila p/ temp e executa (devolve exit)
@@ -11,9 +11,9 @@
 //   lex pkg <init|add|remove|list> ...    gerenciador de pacotes (manifesto)
 //   lex version                           versão
 //
-// (wasm/cross-compile e o fetch de rede do pkg ainda faltam — ver REMOVER-RUST.md.)
+// (o fetch de rede do pkg ainda é parcial.)
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
-import { formatSource } from "./tools/fmt"
+import { formatSource, formatLsx } from "./tools/fmt"
 import { runTestFile } from "./tools/testrunner"
 import { runCheck } from "./tools/checker"
 import { runLsp } from "./tools/lspserver"
@@ -164,7 +164,7 @@ fn watchLoop(file: string, out: string): i64 {
 }
 
 // start = índice onde começa a varrer (2 p/ `lex build …`; 1 p/ a forma
-// implícita `lex <arquivo.lex> …`, compatível com o invocar do Rust/bootstrap).
+// implícita `lex <arquivo.lex> …`, compatível com o invocar do bootstrap).
 fn cmdBuild(av: string[], start: i64): i64 {
     let file: string = "";
     let out: string = "";
@@ -227,10 +227,13 @@ fn cmdFmt(av: string[]): i64 {
     if (files.len() == 0) { Terminal.log("uso: lex fmt [--check] <arquivos.lex>"); return 1; }
     let changed: i64 = 0;
     for (const f of files) {
-        if (!hasSuffix(f, ".lex")) { Terminal.log(`lex fmt: pulando '${f}' (não é .lex)`); }
+        if (!hasSuffix(f, ".lex") && !hasSuffix(f, ".lsx")) { Terminal.log(`lex fmt: pulando '${f}' (não é .lex nem .lsx)`); }
         else {
             const src: string = readFile(f);
-            const formatted: string = formatSource(src);
+            // num .lsx só o frontmatter é código; o corpo é HTML, onde o espaço
+            // é conteúdo e reindentar mudaria a saída.
+            let formatted: string = formatSource(src);
+            if (hasSuffix(f, ".lsx")) { formatted = formatLsx(src); }
             if (!strEq(formatted, src)) {
                 changed = changed + 1;
                 if (check) { Terminal.log(`would reformat ${f}`); }
@@ -287,6 +290,6 @@ else if (strEq(cmd, "test")) { rc = cmdTest(av); }
 else if (strEq(cmd, "check")) { rc = cmdCheck(av); }
 else if (strEq(cmd, "lsp")) { rc = runLsp(); }
 else if (strEq(cmd, "pkg")) { rc = runPkg(av, 2); }
-else if (hasSuffix(cmd, ".lex")) { rc = cmdBuild(av, 1); }   // forma implícita: lex <arquivo.lex>
+else if (hasSuffix(cmd, ".lex") || hasSuffix(cmd, ".lsx")) { rc = cmdBuild(av, 1); }   // forma implícita: lex <arquivo>
 else { Terminal.log(`lex: comando desconhecido '${cmd}'`); rc = 1; }
 return rc;

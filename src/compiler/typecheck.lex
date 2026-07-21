@@ -1,9 +1,8 @@
-// typecheck.lex — checagem de TIPOS (espelha o grosso de src/sema.rs).
+// typecheck.lex — checagem de TIPOS.
 //
 // O `checker.lex` já pegava sintaxe + variável indefinida. Aqui vem a camada de
-// tipos, que é o que ainda prendia o compilador Rust: aridade e tipo de argumento,
-// método/campo inexistente, `const` reatribuído, `new` de classe inexistente, e o
-// retorno do `main`.
+// tipos: aridade e tipo de argumento, método/campo inexistente, `const`
+// reatribuído, `new` de classe inexistente, e o retorno do `main`.
 //
 // PRINCÍPIO: leniência. O modelo de tipos da sema é grosseiro (strings) e o codegen
 // é type-erased; um FALSO-POSITIVO quebraria o build do próprio compilador. Então
@@ -13,13 +12,13 @@ import { Program, ClassDecl, Func, Param, Expr, Stmt } from "./parser"
 import {
     IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call, ArrayLit,
     Field, MethodCall, Index, NewExpr, MapLit, StructLit, Template, Match, Lambda,
-    TryExpr, CatchExpr, SpawnExpr, AwaitExpr
+    TryExpr, CatchExpr, SpawnExpr, AwaitExpr, ElementExpr
 } from "./parser"
 import {
     LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, ForOfStmt, ForStmt,
     ExprStmt, FailStmt, DeferStmt
 } from "./parser"
-import { Sema, Scope, Diag, isClassTy, isArrayTy, isMapTy, isFloatTy, isFunctionType,
+import { Sema, Scope, Diag, ClassInfo, isClassTy, isArrayTy, isMapTy, isFloatTy, isFunctionType,
     baseName, elementTy, builtinFnRet } from "./sema"
 
 // ── compatibilidade de tipos (leniente) ──────────────────────────────────────
@@ -40,7 +39,12 @@ fn tyIsParam(t: string): bool {
 fn tyIsInt(t: string): bool {
     return strEq(t, "i64") || strEq(t, "i32") || strEq(t, "i16") || strEq(t, "i8");
 }
-fn tyIsRaw(t: string): bool { return strEq(t, "ptr") || strEq(t, "string"); }
+// `ptr`, `string` e `Html` são a MESMA célula (um char*). `Html` é fantasma:
+// existe só para o .lsx saber o que escapar, então aqui é intercambiável — o
+// contrário obrigaria a anotar tipo em todo lugar que passa markup adiante.
+fn tyIsRaw(t: string): bool {
+    return strEq(t, "ptr") || strEq(t, "string") || strEq(t, "Html");
+}
 fn tyAssignable(got: string, want: string, sema: Sema): bool {
     if (tyUnknown(got) || tyUnknown(want)) { return true; }
     if (strEq(want, "any")) { return true; }            // `any` aceita tudo (boxing)
@@ -157,6 +161,68 @@ class TypeChecker {
         this.checkArgs(ne.args, ps, concat("new ", ne.cls), ne.pos, sc);
     }
 
+    // `<Card titulo="x" pontos={42} />` — a razão de o nó sobreviver até aqui.
+    // Depois do desugar isto seria `new CardProps(…)` e o erro sairia como
+    // "'new CardProps' expects 2 argument(s), got 1", apontando p/ uma classe
+    // que ninguém escreveu. Aqui dá p/ falar de props, com o nome certo.
+    checkElement(el: ElementExpr, sc: Scope) {
+        for (const v of el.vals) { this.checkExpr(v, sc); }
+        if (el.hasKids) { this.checkExpr(el.children, sc); }
+
+        // o componente existe? (uma `fn <Nome>` de topo, gerada pelo .lsx)
+        const fi: i64 = this.sema.funcIndex(el.name);
+        if (fi < 0) {
+            this.err(el.pos, len(el.name), `unknown component '<${el.name}>'`);
+            return;
+        }
+        const ps: Param[] = this.sema.funcs[fi].params;
+        if (ps.len() == 0) { return; }                      // leniente: sem props
+        const pty: string = ps[0].ty;
+        if (this.sema.classes.findInfo(pty) < 0) { return; }
+
+        // prop inexistente
+        let ok: bool = true;
+        let i: i64 = 0;
+        while (i < el.attrs.len()) {
+            if (this.sema.classes.fieldSlot(pty, el.attrs[i]) < 0) {
+                this.err(el.pos, len(el.name),
+                    `unknown prop '${el.attrs[i]}' on '<${el.name}>'`);
+                ok = false;
+            }
+            i = i + 1;
+        }
+        if (!ok) { return; }                                // não acumula ruído
+
+        // prop faltando
+        const ci: ClassInfo = this.sema.classes.find(pty);
+        for (const f of ci.fields) {
+            if (strEq(f.name, "children")) { continue; }     // preenchida pelo slot
+            let found: bool = false;
+            let j: i64 = 0;
+            while (j < el.attrs.len()) {
+                if (strEq(el.attrs[j], f.name)) { found = true; }
+                j = j + 1;
+            }
+            if (!found) {
+                this.err(el.pos, len(el.name),
+                    `missing prop '${f.name}' on '<${el.name}>'`);
+                return;
+            }
+        }
+
+        // tipo de cada prop
+        let k: i64 = 0;
+        while (k < el.attrs.len()) {
+            const want: string = this.sema.classes.fieldType(pty, el.attrs[k]);
+            const got: string = this.sema.typeOf(el.vals[k], sc);
+            if (!tyAssignable(got, want, this.sema)) {
+                this.err(el.pos, len(el.name),
+                    `prop '${el.attrs[k]}' of '<${el.name}>' expects ${want}, got ${got}`);
+            }
+            k = k + 1;
+        }
+    }
+
     checkExprs(xs: Expr[], sc: Scope) { for (const e of xs) { this.checkExpr(e, sc); } }
 
     checkExpr(e: Expr, sc: Scope) {
@@ -177,6 +243,7 @@ class TypeChecker {
             SpawnExpr s => this.checkExpr(s.call, sc),
             AwaitExpr a => this.checkExpr(a.inner, sc),
             Match mt => this.checkMatch(mt, sc),
+            ElementExpr el => this.checkElement(el, sc),
             _ => 0
         };
     }

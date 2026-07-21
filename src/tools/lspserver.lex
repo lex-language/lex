@@ -1,5 +1,5 @@
-// lspserver.lex — núcleo do Language Server (MÓDULO, só declarações). Espelha
-// src/lsp.rs: JSON-RPC por stdio (initialize/didOpen/didChange/shutdown/exit) e
+// lspserver.lex — núcleo do Language Server (MÓDULO, só declarações).
+// JSON-RPC por stdio (initialize/didOpen/didChange/shutdown/exit) e
 // diagnósticos via o checker (chamado direto). Exposto como `lex lsp`.
 import { jParse, jGet, jStr, jNum, jArr, jPath, jEscape, Json, JNum, JStr } from "./json"
 import { checkJson } from "./checker"
@@ -102,8 +102,17 @@ fn diagsToLsp(arr: Json): string {
 // Chama o checker DIRETO (`checkJson`), sem subprocesso: o LSP já roda dentro do
 // binário do lex. Antes ele fazia `system("lexcheck ...")` — um binário separado
 // que precisava estar no PATH e que nem existe mais.
+// a extensão do temp TEM de vir do uri: é ela que escolhe o pipeline (.lex ou
+// .lsx). Gravar um componente num arquivo .lex faria o checker lexar o markup
+// como código e cuspir uma cascata de "unexpected token".
+fn tmpExtFor(uri: string): string {
+    const n: i64 = len(uri);
+    if (n > 4 && strEq(substring(uri, n - 4, n), ".lsx")) { return ".lsx"; }
+    return ".lex";
+}
+
 fn analyzeAndPublish(uri: string, text: string) {
-    const tmp: string = "/tmp/lex_lsp_doc.lex";
+    const tmp: string = concat("/tmp/lex_lsp_doc", tmpExtFor(uri));
     writeFile(tmp, text);
     const arr: Json = jParse(checkJson(tmp));
     const diags: string = diagsToLsp(arr);

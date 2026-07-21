@@ -1,4 +1,4 @@
-// json.lex — parser JSON mínimo em lex (Fase F6.11), espelha src/json.rs.
+// json.lex — parser JSON mínimo em lex (Fase F6.11).
 // Suficiente pro protocolo do LSP: objetos, arrays, strings (com escapes),
 // números (inteiros — basta p/ line/col), true/false/null. A SAÍDA é montada à
 // mão; aqui só parseamos a entrada e oferecemos acessores + escape.

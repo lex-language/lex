@@ -1,9 +1,9 @@
-// parity.test.lex — PORTÃO DE PARIDADE com o compilador Rust (portado de tests/e2e.rs).
-// NÃO faz parte da suíte verde: é o gate que diz o que AINDA falta portar.
+// parity.test.lex — PORTÃO DE COBERTURA ponta-a-ponta da linguagem.
+// NÃO faz parte da suíte verde: é o gate que diz o que AINDA falta cobrir.
 // Rode com: lex test tests/parity.test.lex
-// Portado de tests/e2e.rs (que morreu junto com o compilador Rust). Cada caso é um
-// programa `main(): i32` que devolve 0 quando todas as verificações passam: o teste
-// compila o fonte, linka com clang e RODA o binário, conferindo o exit code.
+// Cada caso é um programa `main(): i32` que devolve 0 quando todas as verificações
+// passam: o teste compila o fonte, linka com clang e RODA o binário, conferindo o
+// exit code.
 import { compileToIR } from "../compiler/codegen"
 
 // fonte -> exit code do binário nativo (-1 se o clang falhar).

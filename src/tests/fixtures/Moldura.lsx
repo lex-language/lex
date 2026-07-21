@@ -1,0 +1,6 @@
+---
+class Props {
+    nome: string
+}
+---
+<section data-nome={props.nome}><slot /></section>

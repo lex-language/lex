@@ -1,9 +1,9 @@
 // checker.lex — núcleo do `lex check` (MÓDULO, só declarações). Detecta erros de
 // SINTAXE (parser acumula com posição) e VARIÁVEL INDEFINIDA, e imprime o array
-// JSON de diagnósticos no formato do `lex check --json` do Rust (line/col 0-based).
+// JSON de diagnósticos no formato do `lex check --json` (line/col 0-based).
 import { lexSrc } from "../compiler/lexer"
 import { Parser, Program } from "../compiler/parser"
-import { loadProgram } from "../compiler/modloader"
+import { loadProgram, parseSource } from "../compiler/modloader"
 import { checkProgram, Diag } from "../compiler/sema"
 import { typeCheck } from "../compiler/typecheck"
 import { jEscape } from "./json"
@@ -22,7 +22,9 @@ fn posJson(src: string, pos: i64, span: i64, msg: string): string {
     const endCol: i64 = col + span;
     return `{"line":${line},"col":${col},"endLine":${line},"endCol":${endCol},"message":"${jEscape(msg)}"}`;
 }
-fn diagJson(src: string, d: Diag): string { return posJson(src, d.pos, d.span, d.msg); }
+fn diagJson(src: string, d: Diag): string {
+    return posJson(src, d.pos, d.span, d.msg);
+}
 
 // checa `path` e DEVOLVE o array JSON de diagnósticos (não imprime).
 // O LSP precisa da string: ele fala JSON-RPC pelo stdout, então qualquer print
@@ -32,8 +34,7 @@ fn diagJson(src: string, d: Diag): string { return posJson(src, d.pos, d.span, d
 // programa MESCLADO, p/ resolver os imports e não acusar nomes de outros módulos).
 fn checkJson(path: string): string {
     const src: string = readFile(path);
-    const p: Parser = new Parser(lexSrc(src));
-    p.parseModule();
+    const p: Parser = parseSource(path, src);   // .lex ou .lsx, conforme a extensão
 
     if (p.errs.len() > 0) {
         let out: string = "[";

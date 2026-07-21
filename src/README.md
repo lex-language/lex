@@ -73,7 +73,7 @@ Tudo mora num binário só (`lexcli.lex`), que despacha os subcomandos:
 | `tools/lspserver.lex` | `lex lsp` — Language Server por stdio (chama o checker direto) |
 | `tools/testrunner.lex` | `lex test` — funde `std/test.lex` + a suíte, compila e roda |
 | `tools/pkg*.lex`, `tools/toml.lex`, `tools/semver.lex` | `lex pkg` — manifesto e resolução |
-| `tools/json.lex`, `tools/diag.lex` | JSON (usado pelo LSP) e diagnósticos estilo rustc |
+| `tools/json.lex`, `tools/diag.lex` | JSON (usado pelo LSP) e renderização de diagnósticos |
 
 ## Bootstrap
 

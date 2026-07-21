@@ -1,0 +1,7 @@
+---
+class Props {
+    texto: string
+    bruto: string
+}
+---
+<li title={props.texto}>{props.texto}|{html(props.bruto)}</li>

@@ -1,11 +1,12 @@
 // lexer.lex — o lexer do lex, escrito em lex (Fase 1 do self-hosting).
 //
-// Espelha src/lexer.rs + src/token.rs: fonte → sequência de tokens. A fonte é
-// tratada como bytes (ASCII), lidos em O(1) com peek8 sobre a string (char*).
+// Fonte → sequência de tokens. A fonte é tratada como bytes (ASCII), lidos em
+// O(1) com peek8 sobre a string (char*).
 //
-// Pendências (TODO, ver src/README.md):
-//   - template literals (`...${}...`) e JSX: por ora um scan ingênuo até a
-//     crase de fecho, produzindo um único Tok.Template com o texto cru.
+// Template literals (`...${}...`) e markup JSX (<p>...</p>) viram o MESMO
+// token — Tok.Template com o texto cru — e o parser fatia os ${} depois. A
+// crase delimita explicitamente; o markup é reconhecido por posição (só onde
+// uma expressão pode começar) e escaneado até o elemento raiz fechar.
 
 // ── tipos de token ─────────────────────────────────────────────────────────
 // enum é declaração GLOBAL (visível dentro das funções) e coage com i64.
@@ -15,6 +16,8 @@ enum Tok {
     Break, Continue, Match, Type, Try, Catch, Fail, Spawn, Class, Extends,
     Interface, Implements, Enum, New, Static, Private, Super, True, False,
     Defer, Async, Await,
+    // AI-specific keywords
+    Tool, Agent, Crew, Workflow, Memory,
     // identificadores e literais
     Ident, Int, Float, Str, Template,
     // pontuação
@@ -108,6 +111,12 @@ fn keywordKind(s: string): Tok {
     if (strEq(s, "true")) { return Tok.True; }
     if (strEq(s, "false")) { return Tok.False; }
     if (strEq(s, "defer")) { return Tok.Defer; }
+    // AI-specific keywords
+    if (strEq(s, "tool")) { return Tok.Tool; }
+    if (strEq(s, "agent")) { return Tok.Agent; }
+    if (strEq(s, "crew")) { return Tok.Crew; }
+    if (strEq(s, "workflow")) { return Tok.Workflow; }
+    if (strEq(s, "memory")) { return Tok.Memory; }
     return Tok.Ident;
 }
 
@@ -120,6 +129,111 @@ fn escChar(e: i64, orig: string): string {
     if (e == 92) { return "\\"; }
     if (e == 34) { return "\""; }
     return orig;
+}
+
+// ── markup literal (JSX) ───────────────────────────────────────────────────
+// `<` é ambíguo: menor-que ou abertura de markup. Desempatamos por POSIÇÃO —
+// markup só começa onde uma expressão pode começar, isto é, quando o token
+// anterior não pode terminar uma expressão (`return <p>`, `= <p>`, `f(<p>`).
+// Depois de Ident/Str/`)`/`]` o `<` é sempre comparação.
+fn markupPos(toks: Token[]): bool {
+    const m: i64 = toks.len();
+    if (m == 0) { return true; }
+    const k: Tok = toks[m - 1].kind;
+    if (k == Tok.Return || k == Tok.Eq || k == Tok.FatArrow || k == Tok.Arrow) { return true; }
+    if (k == Tok.LParen || k == Tok.LBracket || k == Tok.LBrace) { return true; }
+    if (k == Tok.Comma || k == Tok.Colon || k == Tok.Semicolon) { return true; }
+    if (k == Tok.AmpAmp || k == Tok.PipePipe || k == Tok.Bang) { return true; }
+    if (k == Tok.PlusEq || k == Tok.MinusEq || k == Tok.StarEq) { return true; }
+    if (k == Tok.SlashEq || k == Tok.PercentEq) { return true; }
+    return false;
+}
+
+// Tags HTML sem fecho: não abrem profundidade (senão o scan nunca fecharia).
+fn isVoidTag(s: string): bool {
+    if (strEq(s, "meta") || strEq(s, "link") || strEq(s, "br")) { return true; }
+    if (strEq(s, "img") || strEq(s, "hr") || strEq(s, "input")) { return true; }
+    if (strEq(s, "col") || strEq(s, "base") || strEq(s, "area")) { return true; }
+    if (strEq(s, "embed") || strEq(s, "source") || strEq(s, "track")) { return true; }
+    if (strEq(s, "param") || strEq(s, "wbr")) { return true; }
+    return false;
+}
+
+// Byte que pode continuar um nome de tag (inclui '-' de <my-elem>).
+fn isTagChar(c: i64): bool { return isAlpha(c) || isDigit(c) || c == 45; }
+
+// Pula um `${ … }` a partir do `$`; devolve o índice após o `}` de fecho.
+fn skipInterp(src: string, i0: i64, n: i64): i64 {
+    let i: i64 = i0 + 2;
+    let depth: i64 = 1;
+    while (i < n && depth > 0) {
+        const c: i64 = peek8(src, i);
+        if (c == 123) { depth = depth + 1; }
+        else if (c == 125) { depth = depth - 1; }
+        i = i + 1;
+    }
+    return i;
+}
+
+// Pula uma tag `<…>` a partir do `<`; devolve o índice após o `>`. Ajusta a
+// profundidade: +1 abre, -1 fecha, 0 para self-closing/void/`<!doctype>`.
+fn skipTag(src: string, i0: i64, n: i64, depth: i64[]): i64 {
+    const a: i64 = at(src, i0 + 1, n);
+    // <!doctype>, <!-- … -->, <?xml?>: texto solto, não mexe na profundidade
+    if (a == 33 || a == 63) {
+        let i: i64 = i0 + 1;
+        while (i < n && peek8(src, i) != 62) { i = i + 1; }
+        return i + 1;
+    }
+    let j: i64 = i0 + 1;
+    let closing: bool = false;
+    if (a == 47) { closing = true; j = j + 1; }
+    const ns: i64 = j;
+    while (j < n && isTagChar(peek8(src, j))) { j = j + 1; }
+    const name: string = substring(src, ns, j);
+    // resto da tag: atributos, com aspas respeitadas (podem conter '>')
+    let selfClose: bool = false;
+    while (j < n) {
+        const c: i64 = peek8(src, j);
+        if (c == 34 || c == 39) {
+            j = j + 1;
+            while (j < n && peek8(src, j) != c) { j = j + 1; }
+            j = j + 1;
+            continue;
+        }
+        if (c == 62) { break; }
+        if (c == 47 && at(src, j + 1, n) == 62) { selfClose = true; j = j + 1; break; }
+        j = j + 1;
+    }
+    if (len(name) > 0) {
+        if (closing) { depth[0] = depth[0] - 1; }
+        else if (!selfClose && !isVoidTag(name)) { depth[0] = depth[0] + 1; }
+    }
+    return j + 1;                                    // consome o '>'
+}
+
+// Escaneia um literal de markup a partir do `<` em `start`; devolve o índice
+// do primeiro byte DEPOIS do literal. Termina quando a profundidade volta a
+// zero e aparece algo que não seja espaço nem outra tag — assim `;`, `,` ou
+// `}` encerram, e fragmentos multi-raiz (`<p>..</p><h1>..</h1>`) continuam.
+fn scanMarkup(src: string, start: i64, n: i64): i64 {
+    let depth: i64[] = [0];
+    let i: i64 = start;
+    while (i < n) {
+        const c: i64 = peek8(src, i);
+        if (c == 36 && at(src, i + 1, n) == 123) { i = skipInterp(src, i, n); continue; }
+        if (c == 60) {
+            i = skipTag(src, i, n, depth);
+            if (depth[0] < 0) { return i; }          // fecho a mais: para aqui
+            continue;
+        }
+        if (depth[0] == 0) {
+            if (c == 32 || c == 9 || c == 13 || c == 10) { i = i + 1; continue; }
+            return i;                                 // texto fora de tag: acabou
+        }
+        i = i + 1;
+    }
+    return i;
 }
 
 // ── o lexer ────────────────────────────────────────────────────────────────
@@ -168,7 +282,6 @@ fn lexSrc(src: string): Token[] {
 
         // template literal (TODO: ${} e JSX). Scan ingênuo até a crase de fecho.
         if (c == 96) {
-            const tmplStart: i64 = i;
             i = i + 1;
             const tstart: i64 = i;
             while (i < n && peek8(src, i) != 96) {
@@ -177,7 +290,10 @@ fn lexSrc(src: string): Token[] {
             }
             const body: string = substring(src, tstart, i);
             if (i < n) { i = i + 1; }                   // consome a crase
-            toks.push(tkText(Tok.Template, body, tmplStart));
+            // pos = início do CORPO (não da crase). O markup usa a mesma
+            // convenção, e é ela que deixa o parser remapear a posição de um
+            // erro dentro de `${…}` para o offset real no arquivo.
+            toks.push(tkText(Tok.Template, body, tstart));
             continue;
         }
 
@@ -267,6 +383,19 @@ fn lexSrc(src: string): Token[] {
             if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.PercentEq, i)); i = i + 2; continue; }
             toks.push(tk(Tok.Percent, i)); i = i + 1; continue;
         }
+        // markup literal: `<` em posição de expressão seguido de nome de tag
+        // (ou `<!doctype`). Vira o mesmo Tok.Template da crase — o parser não
+        // distingue os dois, e `${}` continua valendo.
+        if (c == 60 && markupPos(toks)) {
+            const nx: i64 = at(src, i + 1, n);
+            if (isAlpha(nx) || nx == 33) {
+                const mend: i64 = scanMarkup(src, i, n);
+                toks.push(tkText(Tok.Template, substring(src, i, mend), i));
+                i = mend;
+                continue;
+            }
+        }
+
         if (c == 60) {                                  // < << <=
             if (at(src, i + 1, n) == 60) { toks.push(tk(Tok.Shl, i)); i = i + 2; continue; }
             if (at(src, i + 1, n) == 61) { toks.push(tk(Tok.Le, i)); i = i + 2; continue; }
@@ -295,8 +424,8 @@ fn lexSrc(src: string): Token[] {
             toks.push(tk(Tok.Bang, i)); i = i + 1; continue;
         }
 
-        // byte desconhecido: pula (o compilador Rust dá erro aqui; aqui somos
-        // tolerantes pra o lexer-em-lex não abortar no PoC).
+        // byte desconhecido: pula em vez de dar erro — tolerante de propósito,
+        // pra o lexer não abortar no meio de um arquivo.
         i = i + 1;
     }
 

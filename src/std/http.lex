@@ -18,6 +18,21 @@
 import { lexListen, lexAccept } from "./socket";
 import { read, write, close, strlen, malloc } from "./libc";
 
+// CRLF montado byte a byte (13, 10).
+//
+// ATENÇÃO: o lexer não suporta o escape `\r` — num literal ele vira um 'r'
+// literal (verificável: `X\r\nY` sai como 58 72 0a 59). Com isso o bloco de
+// cabeçalhos HTTP nunca terminava de verdade, e o cliente engolia o início do
+// corpo como se fossem cabeçalhos (além de ver `charset=utf-8r`, inválido).
+// Enquanto o escape não existir na linguagem, o CR vem daqui.
+fn crlf(): string {
+    const p: ptr = alloc(3);
+    poke8(p, 0, 13);
+    poke8(p, 1, 10);
+    poke8(p, 2, 0);
+    return p;
+}
+
 // Texto do status HTTP a partir do código (o necessário para uma API simples).
 function httpStatus(code: i64): string {
     if (code == 201) { return "201 Created"; }
@@ -87,9 +102,13 @@ class Conn {
         return substring(full, q + 1, len(full));
     }
 
-    // corpo da requisição (depois do cabeçalho \r\n\r\n).
+    // corpo da requisição (depois da linha em branco que fecha o cabeçalho).
+    // O separador é CRLF CRLF de verdade — os clientes mandam 0d 0a 0d 0a.
     body(): string {
-        const marker: i64 = indexOf(this.raw, "\r\n\r\n");
+        const nl: string = crlf();
+        const sep: string = concat(nl, nl);
+        const marker: i64 = indexOf(this.raw, sep);
+        free(nl);
         if (marker < 0) { return ""; }
         return substring(this.raw, marker + 4, len(this.raw));
     }
@@ -107,7 +126,9 @@ class Conn {
     // resposta completa com status e Content-Type quaisquer (API/JSON), depois
     // fecha a conexão. Libera o buffer da requisição (já consumido aqui).
     respondWith(status: i64, ctype: string, body: ptr) {
-        const header: ptr = `HTTP/1.1 ${httpStatus(status)}\r\nContent-Type: ${ctype}\r\nContent-Length: ${strlen(body)}\r\nConnection: close\r\n\r\n`;
+        const nl: string = crlf();
+        const header: ptr = `HTTP/1.1 ${httpStatus(status)}${nl}Content-Type: ${ctype}${nl}Content-Length: ${strlen(body)}${nl}Connection: close${nl}${nl}`;
+        free(nl);          // o header já copiou os bytes para a arena
         this.send(header);
         this.send(body);
         free(this.raw);

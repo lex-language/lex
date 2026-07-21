@@ -1,8 +1,8 @@
 // Testes do renderizador de diagnósticos (F6.11). Rode com:  lex test tests/
-// Caminho sem-cor (determinístico), igual ao não-TTY do src/diag.rs.
+// Caminho sem-cor (determinístico).
 import { renderDiag } from "../tools/diag"
 
-describe("diag: render estilo rustc", () => {
+describe("diag: render do diagnóstico", () => {
         test("erro numa linha, caret sob o token", () => {
                 expect(renderDiag("test.lex", "x = 1 +", 6, 7, "token inesperado", ""))
                 .toBe("error: token inesperado\n --> test.lex:1:7\n  |\n1 | x = 1 +\n  |       ^\n");

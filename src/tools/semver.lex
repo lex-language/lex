@@ -1,5 +1,5 @@
-// semver.lex — versões semânticas em lex (Fase F6.8-B). Espelha o uso do crate
-// `semver` em src/pkg.rs: parse de "1.2.3" (com 'v' opcional), comparação, e
+// semver.lex — versões semânticas em lex (Fase F6.8-B). Usado pelo `pkg.lex`:
+// parse de "1.2.3" (com 'v' opcional), comparação, e
 // requisitos (`^`, `~`, `>=`, `>`, `<=`, `<`, `=`, `*`; bare = caret). Ignora
 // pré-release/build (as tags do registry são x.y.z simples). Usado p/ escolher
 // a maior versão que casa com o requisito.
@@ -65,7 +65,7 @@ fn parseReq(s: string): VersionReq {
     if (peek8(t, 0) == 62) { return new VersionReq(">", false, parseSemVer(substring(t, 1, len(t)))); }   // >
     if (peek8(t, 0) == 60) { return new VersionReq("<", false, parseSemVer(substring(t, 1, len(t)))); }   // <
     if (peek8(t, 0) == 61) { return new VersionReq("=", false, parseSemVer(substring(t, 1, len(t)))); }   // =
-    return new VersionReq("^", false, parseSemVer(t));   // bare = caret (como o crate semver)
+    return new VersionReq("^", false, parseSemVer(t));   // bare = caret (convenção do semver)
 }
 
 // limite superior (exclusivo) do caret: ^1.2.3<2.0.0; ^0.2.3<0.3.0; ^0.0.3<0.0.4.

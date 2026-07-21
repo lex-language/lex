@@ -1,7 +1,6 @@
-// pkg.lex — núcleo do gerenciador de pacotes em lex (Fase F6.8-C). Espelha a
-// lógica de parsing/manifesto de src/pkg.rs. As partes PURAS (parse de spec,
-// normalização de URL, mutação do lex.toml) vivem aqui e são testáveis sem rede;
-// o fetch via git/curl fica no `lex pkg`, ainda parcial.
+// pkg.lex — núcleo do gerenciador de pacotes em lex (Fase F6.8-C). As partes
+// PURAS (parse de spec, normalização de URL, mutação do lex.toml) vivem aqui e
+// são testáveis sem rede; o fetch via git/curl fica no `lex pkg`, ainda parcial.
 import { TomlDoc, TomlSection, parseToml, serializeToml } from "./toml"
 
 // uma dependência resolvida da forma textual: kind = "file"|"git"|"registry".
@@ -64,7 +63,7 @@ fn normalizeGitUrl(u: string): string {
     return concat("https://", u);
 }
 
-// (nameHint vazio = sem dica). Espelha parse_dep de src/pkg.rs.
+// (nameHint vazio = sem dica).
 fn parseDep(nameHint: string, spec: string): DepSpec {
     if (pStarts(spec, "file:")) {
         const rest: string = substring(spec, 5, len(spec));

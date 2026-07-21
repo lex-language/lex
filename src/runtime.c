@@ -653,6 +653,42 @@ char *__lex_concat(const char *a, const char *b) {
     return r;
 }
 
+// Escape de HTML — o que o corpo de um .lsx aplica em toda interpolação cujo
+// tipo NÃO é `Html`. Cobre texto e valor de atributo entre aspas de uma vez, e
+// por isso escapa também `"` e `'`.
+//
+// Duas passadas para dimensionar exato: a arena não realoca, e chutar o tamanho
+// desperdiçaria em texto comum (o caso esmagadoramente mais frequente).
+char *__lex_html_escape(const char *s) {
+    if (!s) return (char *)"";
+    size_t extra = 0;
+    for (const char *p = s; *p; p++) {
+        switch (*p) {
+            case '&': extra += 4; break;   // &amp;
+            case '<': case '>': extra += 3; break;   // &lt; &gt;
+            case '"': extra += 5; break;   // &quot;
+            case '\'': extra += 5; break;  // &#39;
+            default: break;
+        }
+    }
+    size_t n = strlen(s);
+    if (extra == 0) return (char *)s;      // nada a escapar: devolve como veio
+    char *r = lex_alloc(n + extra + 1);
+    char *o = r;
+    for (const char *p = s; *p; p++) {
+        switch (*p) {
+            case '&': memcpy(o, "&amp;", 5); o += 5; break;
+            case '<': memcpy(o, "&lt;", 4); o += 4; break;
+            case '>': memcpy(o, "&gt;", 4); o += 4; break;
+            case '"': memcpy(o, "&quot;", 6); o += 6; break;
+            case '\'': memcpy(o, "&#39;", 5); o += 5; break;
+            default: *o++ = *p; break;
+        }
+    }
+    *o = 0;
+    return r;
+}
+
 // `${42}` — interpolação de inteiro
 char *__lex_i64_to_str(long long v) {
     char *r = lex_alloc(24);
@@ -1878,6 +1914,51 @@ LexArr *__lex_fs_list(const char *path) {
     return __lex_split(joined, "\n");
 }
 
+// ===========================================================================
+// DOM — as ilhas (hidratação no browser).
+//
+// Namespace de import PRÓPRIO ("dom", separado de "lex") para que um host de
+// linha de comando (Node/SSR) possa instanciar o módulo sem fornecer DOM algum.
+//
+// Um nó do DOM trafega como HANDLE opaco (índice numa tabela do lado JS), nunca
+// como ponteiro — objeto de JS não cabe na memória linear. 0 = nó inexistente.
+//
+// Os callbacks de evento viajam como ÍNDICE NA TABELA DE FUNÇÕES do wasm, o
+// mesmo mecanismo que o `spawn` já usa: o host faz
+// `instance.exports.__indirect_function_table.get(idx)` e chama.
+// ===========================================================================
+#define LEX_DOM_IMPORT(n) __attribute__((import_module("dom"), import_name(n)))
+LEX_DOM_IMPORT("query")    extern long long __lex_host_dom_query(const char *sel);
+LEX_DOM_IMPORT("create")   extern long long __lex_host_dom_create(const char *tag);
+LEX_DOM_IMPORT("set_text") extern void __lex_host_dom_set_text(long long h, const char *s);
+LEX_DOM_IMPORT("set_html") extern void __lex_host_dom_set_html(long long h, const char *s);
+LEX_DOM_IMPORT("set_attr") extern void __lex_host_dom_set_attr(long long h, const char *k, const char *v);
+LEX_DOM_IMPORT("get_attr") extern char *__lex_host_dom_get_attr(long long h, const char *k);
+LEX_DOM_IMPORT("append")   extern void __lex_host_dom_append(long long parent, long long child);
+LEX_DOM_IMPORT("on")       extern void __lex_host_dom_on(long long h, const char *ev, long long fnIdx, long long env, long long arg);
+
+long long __lex_dom_query(const char *sel) { return __lex_host_dom_query(sel); }
+long long __lex_dom_create(const char *tag) { return __lex_host_dom_create(tag); }
+void __lex_dom_set_text(long long h, const char *s) { __lex_host_dom_set_text(h, s); }
+void __lex_dom_set_html(long long h, const char *s) { __lex_host_dom_set_html(h, s); }
+void __lex_dom_set_attr(long long h, const char *k, const char *v) { __lex_host_dom_set_attr(h, k, v); }
+char *__lex_dom_get_attr(long long h, const char *k) {
+    char *v = __lex_host_dom_get_attr(h, k);
+    return v ? v : (char *)"";
+}
+void __lex_dom_append(long long p, long long c) { __lex_host_dom_append(p, c); }
+
+// `fn` chega como uma CLOSURE do lex: bloco no heap cujo slot 0 é o ponteiro da
+// função (que no wasm é o índice na tabela) e cujos slots seguintes são as
+// capturas. O wrapper gerado tem assinatura (env, p0…), e o env é o próprio
+// bloco — então desempacotamos aqui e mandamos os dois ao host, que não tem por
+// que conhecer a convenção de closure da linguagem.
+void __lex_dom_on(long long h, const char *ev, long long fn, long long arg) {
+    if (!fn) return;
+    long long idx = *(long long *)(uintptr_t)fn;
+    __lex_host_dom_on(h, ev, idx, fn, arg);
+}
+
 // libc por FFI (ABI i64, via declare_function): o `buf` chega como i64 — casta
 // p/ ponteiro (i32 no wasm) e delega aos fds do host.
 long long read(long long fd, long long buf, long long n) {
@@ -2858,3 +2939,24 @@ void __lex_arena_free(void) {
     // no wasm (single-thread) a arena é única e vive até o fim do programa:
     // o spawn roda síncrono na mesma thread, então não se libera nada aqui.
 }
+
+// ===========================================================================
+// DOM fora do wasm: no-ops.
+//
+// Um binário nativo não tem DOM, mas o codegen declara os símbolos sempre que
+// o programa os menciona — sem estes stubs o link quebraria. Devolvem 0/""
+// (handle nulo), então uma ilha compilada p/ nativo simplesmente não faz nada
+// em vez de crashar.
+// ===========================================================================
+#ifndef __wasm__
+long long __lex_dom_query(const char *sel) { (void)sel; return 0; }
+long long __lex_dom_create(const char *tag) { (void)tag; return 0; }
+void __lex_dom_set_text(long long h, const char *s) { (void)h; (void)s; }
+void __lex_dom_set_html(long long h, const char *s) { (void)h; (void)s; }
+void __lex_dom_set_attr(long long h, const char *k, const char *v) { (void)h; (void)k; (void)v; }
+char *__lex_dom_get_attr(long long h, const char *k) { (void)h; (void)k; return (char *)""; }
+void __lex_dom_append(long long p, long long c) { (void)p; (void)c; }
+void __lex_dom_on(long long h, const char *ev, long long fn, long long arg) {
+    (void)h; (void)ev; (void)fn; (void)arg;
+}
+#endif

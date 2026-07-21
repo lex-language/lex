@@ -1,0 +1,7 @@
+---
+class Props {
+    texto: string
+    n: i64
+}
+---
+<span class="selo">{props.texto}:{props.n}</span>

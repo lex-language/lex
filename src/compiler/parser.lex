@@ -1,6 +1,6 @@
 // parser.lex — o parser do lex, escrito em lex (Fase 2).
 //
-// Espelha src/parser.rs + src/ast.rs. A AST é uma HIERARQUIA DE CLASSE (nó base
+// Tokens → AST. A AST é uma HIERARQUIA DE CLASSE (nó base
 // + uma subclasse por construção), percorrida com `match` por padrão de tipo —
 // o mesmo mecanismo que a sema/codegen vão usar. O operador binário/unário é
 // guardado como o `Tok` do lexer (sem um enum BinOp separado).
@@ -15,7 +15,7 @@
 //     expr-statement.
 //   - Declarações de topo: `fn`, `class` (extends/constructor/campos/métodos),
 //     `enum`, `import`; statements de topo viram um `main` (script-mode).
-// Como em src/parser.rs, quebras de linha são INVISÍVEIS p/ peek/advance.
+// Quebras de linha são INVISÍVEIS p/ peek/advance.
 // TODO: defer/fail, compound assign (+=,++), try/catch/spawn/await/arrow, e as
 //   declarações de topo type/interface/declare (não usadas pelo compilador).
 import { lexSrc, Token, Tok } from "./lexer"
@@ -103,7 +103,12 @@ class StructLit extends Expr {
 }
 class Template extends Expr {
     parts: Expr[]       // pedaços: StrLit (literal) ou Expr (interpolação ${})
-    constructor(parts: Expr[]) { this.parts = parts }
+    // true = corpo de um .lsx: toda interpolação cujo tipo não seja `Html` sai
+    // ESCAPADA. Um template de crase comum (`...${x}...`) nunca escapa — o lex
+    // monta HTML com eles desde sempre, e escapar quebraria todo programa
+    // existente. Por isso é um flag, e não o padrão.
+    escapes: bool
+    constructor(parts: Expr[]) { this.parts = parts; this.escapes = false }
 }
 // um braço de `match`: padrão `Tipo bind` (bind="" e pat="_" → curinga) e corpo
 // kind: 0=tag de classe, 1=literal int, 2=literal string, 3=faixa a..b,
@@ -155,6 +160,32 @@ class SpawnExpr extends Expr {
 class AwaitExpr extends Expr {
     inner: Expr
     constructor(inner: Expr) { this.inner = inner }
+}
+// `<Card titulo="x" pontos={42} />` — tag de COMPONENTE num corpo .lsx.
+//
+// Sobrevive como nó próprio até o typecheck (é o que permite dizer "unknown
+// prop 'x' on <Card>" em vez de "'new CardProps' expects 2 arguments") e só no
+// codegen vira `Card(new CardProps(…))`. O desugar é tardio de propósito: a
+// ORDEM dos campos de CardProps só é conhecida depois que o ModuleLoader
+// mesclou todos os módulos.
+//
+// NOVA SUBCLASSE DE Expr: os walkers têm `_` catch-all, então esquecer um deles
+// não dá erro de compilação, dá bug silencioso. Os sítios são
+// sema.typeOf/checkExpr, typecheck.checkExpr, codegen.genExpr/usedInExpr/
+// scCountExpr e parser.printExpr.
+class ElementExpr extends Expr {
+    name: string        // nome do componente (sempre capitalizado)
+    attrs: string[]     // nome de cada prop escrita na tag
+    vals: Expr[]        // valor de cada prop (paralelo a `attrs`)
+    children: Expr      // conteúdo entre <Card>…</Card> — o slot
+    hasKids: bool       // false = tag self-closing
+    island: bool        // `client:load` — hidratar no browser (ver genElement)
+    pos: i64
+    constructor(name: string, attrs: string[], vals: Expr[], children: Expr, hasKids: bool, pos: i64) {
+        this.name = name; this.attrs = attrs; this.vals = vals
+        this.children = children; this.hasKids = hasKids; this.pos = pos
+        this.island = false
+    }
 }
 
 // ── AST: statements e declarações ────────────────────────────────────────────
@@ -238,7 +269,8 @@ class DeferStmt extends Stmt {
 class Param {
     name: string
     ty: string
-    constructor(name: string, ty: string) { this.name = name; this.ty = ty }
+    description: string  // descrição do parâmetro (extraída do doc-comment ou @param)
+    constructor(name: string, ty: string) { this.name = name; this.ty = ty; this.description = "" }
 }
 class Func {
     name: string
@@ -247,11 +279,15 @@ class Func {
     fallible: bool
     body: Stmt[]
     isAsync: bool       // `async function`: chamá-la lança uma thread (Future)
+    isTool: bool        // `tool function`: função exportável como tool para LLMs
+    toolDesc: string    // descrição da tool (extraída do doc-comment)
     captures: string[]  // arrow: variáveis livres capturadas POR VALOR (env)
     ownerClass: string  // arrow escrita DENTRO de um método: a classe (tipo do `this`)
     constructor(name: string, params: Param[], ret: string, fallible: bool, body: Stmt[]) {
         this.name = name; this.params = params; this.ret = ret
         this.fallible = fallible; this.body = body; this.isAsync = false
+        this.isTool = false
+        this.toolDesc = ""
         this.captures = []
         this.ownerClass = ""
     }
@@ -289,7 +325,7 @@ class ClassDecl {
     }
 }
 // Programa = imports + enums + classes + funções + statements de topo
-// (script-mode → corpo de um `main` sintetizado). Espelha src/parser.rs.
+// (script-mode → corpo de um `main` sintetizado).
 class Program {
     imports: Import[]
     enums: EnumDecl[]
@@ -305,7 +341,7 @@ class Program {
 }
 
 // Binding power do operador binário (0 = não é binário). Quanto maior, mais
-// forte — mesma ordem da escada de src/parser.rs.
+// forte.
 fn prec(k: Tok): i64 {
     if (k == Tok.PipePipe) { return 1; }
     if (k == Tok.AmpAmp) { return 2; }
@@ -528,7 +564,7 @@ class Parser {
             return ne;
         }
         if (k == Tok.Match) { return this.parseMatch(); }
-        if (k == Tok.Template) { return this.parseTemplate(t.text); }
+        if (k == Tok.Template) { return this.parseTemplate(t.text, t.pos); }
         if (k == Tok.LBrace) { return this.parseBrace(); }
         if (k == Tok.Super) {                        // super(args) → ctor do pai
             if (this.peekKind() == Tok.LParen) { return new Call("super", this.parseArgs()); }
@@ -669,7 +705,9 @@ class Parser {
     // template `...${expr}...`: o lexer entrega o corpo CRU; aqui dividimos em
     // literais (StrLit) e interpolações (expr lexada+parseada). Rastreia a
     // profundidade de chaves dentro de `${ }`; literais vazios são omitidos.
-    parseTemplate(raw: string): Expr {
+    // `basePos` = offset do corpo cru no arquivo, p/ remapear as posições dos
+    // erros achados dentro das interpolações.
+    parseTemplate(raw: string, basePos: i64): Expr {
         let parts: Expr[] = [];
         const n: i64 = len(raw);
         let i: i64 = 0;
@@ -690,7 +728,28 @@ class Parser {
                 const inner: string = substring(raw, start, i);
                 if (i < n) { i = i + 1; }                              // pula }
                 const sub: Parser = new Parser(lexSrc(inner));
-                parts.push(sub.parseExpr());
+                // O sub-parser é um parser DE VERDADE: o que ele produz de
+                // efeito colateral tem de voltar para cá, senão some.
+                //   - lambdaN compartilhado: dois `__lambda_0` no mesmo módulo
+                //     seriam símbolo duplicado na IR;
+                //   - curClassName: uma arrow dentro de `${…}` num método
+                //     precisa do tipo do `this` capturado;
+                //   - lambdas: sem isto a Func içada nunca chega ao Program e
+                //     o link acusa símbolo indefinido;
+                //   - errs: sem isto um erro de sintaxe dentro de `${…}` é
+                //     silencioso. As posições são relativas a `inner`, então
+                //     remapeamos para o offset real no arquivo.
+                sub.lambdaN = this.lambdaN;
+                sub.curClassName = this.curClassName;
+                const e: Expr = sub.parseExpr();
+                this.lambdaN = sub.lambdaN;
+                for (const lm of sub.lambdas) { this.lambdas.push(lm); }
+                let ei: i64 = 0;
+                while (ei < sub.errs.len()) {
+                    this.recordErrAt(basePos + start + sub.errPos[ei], sub.errs[ei]);
+                    ei = ei + 1;
+                }
+                parts.push(e);
                 continue;
             }
             if (c == 92 && i + 1 < n) {                                // escape \X
@@ -951,12 +1010,17 @@ class Parser {
     // ── declaração de função e métodos ────────────────────────────────────────
     parseFunc(): Func {
         let isAsync: bool = false;
+        let isTool: bool = false;
+        // `tool function` — função exportável como tool para LLMs
+        if (this.peekKind() == Tok.Tool) { this.advance(); isTool = true; }
+        // `async function` — função assíncrona
         if (this.peekKind() == Tok.Async) { this.advance(); isAsync = true; }
         this.expect(Tok.Function);                   // fn / function
         const name: string = this.advance().text;
         this.skipTypeArgs();                         // <T> genérico opcional (erasure)
         const f: Func = this.parseSig(name);
         f.isAsync = isAsync;
+        f.isTool = isTool;
         return f;
     }
 
@@ -1141,7 +1205,7 @@ class Parser {
             if (k == Tok.Eof) { return; }
             if (k == Tok.LBrace) { this.skipBalanced(); return; }
             if (k == Tok.Semicolon) { this.advance(); return; }
-            if (k == Tok.Import || k == Tok.Enum || k == Tok.Class || k == Tok.Function) { return; }
+            if (k == Tok.Import || k == Tok.Enum || k == Tok.Class || k == Tok.Function || k == Tok.Tool) { return; }
             this.advance();
         }
     }
@@ -1158,7 +1222,8 @@ class Parser {
             else if (k == Tok.Import) { imports.push(this.parseImport()); }
             else if (k == Tok.Enum) { enums.push(this.parseEnum()); }
             else if (k == Tok.Class) { classes.push(this.parseClass()); }
-            else if (k == Tok.Function || k == Tok.Async) { funcs.push(this.parseFunc()); }
+            // `tool function`, `async function`, `function` — todas são funções
+            else if (k == Tok.Function || k == Tok.Async || k == Tok.Tool) { funcs.push(this.parseFunc()); }
             else if (k == Tok.Type || k == Tok.Interface || k == Tok.Declare) {
                 this.skipModuleDecl();   // interface/type/declare: erasure (não geram código)
             }
@@ -1262,6 +1327,17 @@ fn printStruct(st: StructLit): string {
     return concat(s, ")");
 }
 
+fn printElement(el: ElementExpr): string {
+    let s: string = concat("(element ", el.name);
+    let i: i64 = 0;
+    while (i < el.attrs.len()) {
+        s = concat(s, concat(concat(" ", el.attrs[i]), concat("=", printExpr(el.vals[i]))));
+        i = i + 1;
+    }
+    if (el.hasKids) { s = concat(s, concat(" :kids ", printExpr(el.children))); }
+    return concat(s, ")");
+}
+
 fn printExpr(e: Expr): string {
     return match (e) {
         IntLit n => str(n.value),
@@ -1282,6 +1358,7 @@ fn printExpr(e: Expr): string {
         MapLit ml => printMap(ml),
         StructLit sl => printStruct(sl),
         Lambda lm => `(lambda ${lm.fnName})`,
+        ElementExpr el => printElement(el),
         _ => "?"
     };
 }
@@ -1346,7 +1423,10 @@ fn printFunc(f: Func): string {
     }
     let bang: string = "";
     if (f.fallible) { bang = "!"; }
-    return `(fn ${f.name} (${ps}) ${f.ret}${bang} ${printBlock(f.body)})`;
+    let prefix: string = "fn";
+    if (f.isTool) { prefix = "tool-fn"; }
+    if (f.isAsync) { prefix = concat("async-", prefix); }
+    return `(${prefix} ${f.name} (${ps}) ${f.ret}${bang} ${printBlock(f.body)})`;
 }
 
 // ── impressão das declarações de topo ────────────────────────────────────────

@@ -4,7 +4,7 @@
 //   - pares `chave = "string"` e `chave = ["a", "b", ...]` (listas de string)
 //   - comentários de linha `#`
 // Não cobre TOML completo (inteiros/datas/tabelas inline/multi-linha) — não é
-// preciso aqui. Espelha o uso de toml::from_str/to_string_pretty em src/pkg.rs.
+// preciso aqui.
 
 // um valor: string simples OU lista de strings
 class TomlValue {

@@ -18,17 +18,17 @@
 // pra escolher a chamada de runtime certa. Linka `src/runtime.c` via clang.
 // TODO: classes/métodos/new/match (F6.4), for, curto-circuito, aritmética f64.
 //
-// Espelha src/codegen.rs (que usa inkwell); aqui montamos o texto do IR e o
-// clang faz o resto — mantendo a identidade "compila direto pra LLVM IR".
+// Montamos o TEXTO do LLVM IR e o clang faz o resto — mantendo a identidade
+// "compila direto pra LLVM IR".
 import { lexSrc, Tok } from "./lexer"
 import {
     Expr, IntLit, FloatLit, BoolLit, StrLit, Var, Unary, Binary, Call,
     ArrayLit, Field, MethodCall, Index, MapLit, StructLit, Template, Match, MatchArm, Lambda,
-    TryExpr, CatchExpr, SpawnExpr, AwaitExpr,
+    TryExpr, CatchExpr, SpawnExpr, AwaitExpr, ElementExpr, NewExpr,
     Stmt, LetStmt, AssignStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
     ContinueStmt, ExprStmt, ForOfStmt, ForStmt, FailStmt, DeferStmt, Func, Param, Program, Parser
 } from "./parser"
-import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, isFloatTy, isIntLike, baseName, elementTy, addUniq, idxOf, without } from "./sema"
+import { Sema, Scope, ClassInfo, isArrayTy, isMapTy, isClassTy, isFunctionType, isFloatTy, isIntLike, isHtmlTy, baseName, elementTy, addUniq, idxOf, without } from "./sema"
 
 fn boolLit(b: bool): string {
     if (b) { return "1"; }
@@ -64,6 +64,16 @@ fn irEscape(s: string): string {
 // builtin chamado por função `f(...)` → função de runtime `__lex_*` (1:1).
 // "" = não é um builtin direto (len é especial; ver genLen).
 fn runtimeFn(name: string): string {
+    // DOM (ilhas) — builtins, e não `declare function`, porque o extern emite
+    // toda assinatura como i64 e o wasm-ld recusaria os args de ponteiro.
+    if (strEq(name, "domQuery")) { return "__lex_dom_query"; }
+    if (strEq(name, "domCreate")) { return "__lex_dom_create"; }
+    if (strEq(name, "domSetText")) { return "__lex_dom_set_text"; }
+    if (strEq(name, "domSetHtml")) { return "__lex_dom_set_html"; }
+    if (strEq(name, "domSetAttr")) { return "__lex_dom_set_attr"; }
+    if (strEq(name, "domGetAttr")) { return "__lex_dom_get_attr"; }
+    if (strEq(name, "domAppend")) { return "__lex_dom_append"; }
+    if (strEq(name, "domOn")) { return "__lex_dom_on"; }
     if (strEq(name, "concat")) { return "__lex_concat"; }
     if (strEq(name, "strEq")) { return "__lex_str_eq"; }
     if (strEq(name, "contains")) { return "__lex_contains"; }
@@ -161,6 +171,19 @@ fn runtimeFn(name: string): string {
 // (Também importa o `void`: declarar `arr_push` como i64 passa no nativo — a
 // linkagem C não checa — mas o wasm-ld checa e quebra.)
 fn rtAbi(sym: string): string {
+    // DOM (ilhas). Um nó é HANDLE i64, nunca ponteiro — objeto de JS não cabe
+    // na memória linear. As strings continuam sendo 'p', e é justamente por
+    // isso que estas entradas existem: no wasm32 ptr é i32, e declarar tudo
+    // como i64 linkaria no nativo mas o wasm-ld recusaria.
+    if (strEq(sym, "__lex_html_escape")) { return "p|p"; }
+    if (strEq(sym, "__lex_dom_query")) { return "p|."; }
+    if (strEq(sym, "__lex_dom_create")) { return "p|."; }
+    if (strEq(sym, "__lex_dom_set_text")) { return ".p|v"; }
+    if (strEq(sym, "__lex_dom_set_html")) { return ".p|v"; }
+    if (strEq(sym, "__lex_dom_set_attr")) { return ".pp|v"; }
+    if (strEq(sym, "__lex_dom_get_attr")) { return ".p|p"; }
+    if (strEq(sym, "__lex_dom_append")) { return "..|v"; }
+    if (strEq(sym, "__lex_dom_on")) { return ".p..|v"; }
     // strings
     if (strEq(sym, "__lex_concat")) { return "pp|p"; }
     if (strEq(sym, "__lex_strlen")) { return "p|."; }
@@ -256,7 +279,10 @@ fn rtAbi(sym: string): string {
 }
 // todos os símbolos do runtime, p/ gerar as declarações do preâmbulo.
 fn rtSymbols(): string[] {
-    return ["__lex_concat", "__lex_strlen", "__lex_str_eq", "__lex_contains",
+    return ["__lex_html_escape", "__lex_dom_query", "__lex_dom_create", "__lex_dom_set_text",
+        "__lex_dom_set_html", "__lex_dom_set_attr", "__lex_dom_get_attr",
+        "__lex_dom_append", "__lex_dom_on",
+        "__lex_concat", "__lex_strlen", "__lex_str_eq", "__lex_contains",
         "__lex_starts_with", "__lex_ends_with", "__lex_substring", "__lex_char_at",
         "__lex_to_lower", "__lex_to_upper", "__lex_trim", "__lex_str_replace",
         "__lex_i64_to_str", "__lex_f64_to_str", "__lex_parse_int", "__lex_parse_float",
@@ -361,8 +387,16 @@ fn usedInExpr(e: Expr, out: string[]) {
         SpawnExpr sp => usedInExpr(sp.call, out),
         AwaitExpr aw => usedInExpr(aw.inner, out),
         Lambda lm => addUniq(out, lm.fnName),   // arrow ANINHADA: expandida depois
+        ElementExpr el => usedInElement(el, out),
         _ => 0
     };
+}
+// `<Card x={v}>{w}</Card>` dentro de uma arrow: v e w são variáveis LIVRES e
+// precisam entrar na captura, senão a closure lê lixo do env.
+fn usedInElement(el: ElementExpr, out: string[]): i64 {
+    usedInExprs(el.vals, out);
+    if (el.hasKids) { usedInExpr(el.children, out); }
+    return 0;
 }
 fn usedInBin(b: Binary, out: string[]): i64 { usedInExpr(b.lhs, out); usedInExpr(b.rhs, out); return 0; }
 fn usedInMC(m: MethodCall, out: string[]): i64 { usedInExpr(m.base, out); usedInExprs(m.args, out); return 0; }
@@ -402,6 +436,83 @@ fn usedInFor(fr: ForStmt, out: string[]): i64 {
     if (fr.hasUpdate) { usedInStmt(fr.update, out); }
     usedInStmts(fr.body, out);
     return 0;
+}
+
+// ── contagem de sítios de curto-circuito (&& / ||) ──────────────────────────
+// Cada `&&`/`||` precisa de UM slot de resultado provisório. Se o alloca desse
+// slot for emitido no PONTO DE USO e o `&&` estiver numa condição de loop, o
+// alloca (dinâmico, só liberado no ret) vaza a pilha a cada iteração até estourar.
+// Por isso hoistamos um slot por sítio no bloco entry. Contamos os sítios com
+// esta varredura — espelho fiel de usedInExpr, que já é COMPLETA. Contar a mais
+// só cria slots ociosos; nunca a menos (isso quebraria a IR). Só conta && / ||;
+// o corpo de uma arrow é uma função à parte (contada quando ELA é gerada).
+fn scCountExprs(xs: Expr[]): i64 { let n: i64 = 0; for (const e of xs) { n = n + scCountExpr(e); } return n; }
+fn scCountExpr(e: Expr): i64 {
+    return match (e) {
+        Unary u => scCountExpr(u.operand),
+        Binary b => scCountBin(b),
+        Call c => scCountExprs(c.args),
+        MethodCall m => scCountExpr(m.base) + scCountExprs(m.args),
+        Field f => scCountExpr(f.base),
+        Index ix => scCountExpr(ix.base) + scCountExpr(ix.index),
+        NewExpr ne => scCountExprs(ne.args),
+        ArrayLit a => scCountExprs(a.items),
+        MapLit ml => scCountExprs(ml.vals),
+        StructLit sl => scCountExprs(sl.vals),
+        Template t => scCountExprs(t.parts),
+        Match mt => scCountMatch(mt),
+        TryExpr t => scCountExpr(t.call),
+        CatchExpr c => scCountExpr(c.lhs) + scCountExpr(c.handler),
+        SpawnExpr sp => scCountExpr(sp.call),
+        AwaitExpr aw => scCountExpr(aw.inner),
+        ElementExpr el => scCountElement(el),
+        _ => 0
+    };
+}
+// um `&&`/`||` num atributo (`<Card on={a && b} />`) precisa do seu slot
+// hoistado no entry — contar a MENOS aqui deixa a IR referenciando um alloca
+// que não existe.
+fn scCountElement(el: ElementExpr): i64 {
+    let n: i64 = scCountExprs(el.vals);
+    if (el.hasKids) { n = n + scCountExpr(el.children); }
+    return n;
+}
+fn scCountBin(b: Binary): i64 {
+    let n: i64 = scCountExpr(b.lhs) + scCountExpr(b.rhs);
+    if (b.op == Tok.AmpAmp || b.op == Tok.PipePipe) { n = n + 1; }
+    return n;
+}
+fn scCountMatch(mt: Match): i64 {
+    let n: i64 = scCountExpr(mt.subject);
+    for (const a of mt.arms) {
+        if (a.hasGuard) { n = n + scCountExpr(a.guard); }
+        n = n + scCountExpr(a.body);
+    }
+    return n;
+}
+fn scCountStmts(ss: Stmt[]): i64 { let n: i64 = 0; for (const s of ss) { n = n + scCountStmt(s); } return n; }
+fn scCountStmt(s: Stmt): i64 {
+    return match (s) {
+        LetStmt l => scCountExpr(l.value),
+        AssignStmt a => scCountExpr(a.target) + scCountExpr(a.value),
+        ReturnStmt r => scCountExpr(r.value),
+        IfStmt f => scCountExpr(f.cond) + scCountStmts(f.thenB) + scCountStmts(f.elseB),
+        WhileStmt w => scCountExpr(w.cond) + scCountStmts(w.body),
+        ForOfStmt fo => scCountExpr(fo.iter) + scCountStmts(fo.body),
+        ForStmt fr => scCountForC(fr),
+        ExprStmt e => scCountExpr(e.expr),
+        FailStmt fs => scCountExpr(fs.value),
+        DeferStmt d => scCountStmt(d.body),
+        _ => 0
+    };
+}
+fn scCountForC(fr: ForStmt): i64 {
+    let n: i64 = 0;
+    if (fr.hasInit) { n = n + scCountStmt(fr.init); }
+    if (fr.hasCond) { n = n + scCountExpr(fr.cond); }
+    if (fr.hasUpdate) { n = n + scCountStmt(fr.update); }
+    n = n + scCountStmts(fr.body);
+    return n;
 }
 
 // "x,y" → ["x", "y"]
@@ -465,6 +576,7 @@ class Codegen {
     strs: string[]     // globais de string literais (emitidos no fim do módulo)
     strN: i64          // contador de string literais
     matchN: i64        // contador de blocos de match (nomes únicos)
+    scN: i64           // índice do próximo slot de curto-circuito (&&/||) na função
     bindNames: string[] // pilha de bindings de match (nome → endereço)
     bindAddrs: string[]
     globalNames: string[] // const/let de topo promovidos a slots globais (gget/gset)
@@ -480,6 +592,7 @@ class Codegen {
     lambdaFuncs: Func[]   // as arrows içadas (p/ achar as capturas de cada uma)
     fnValNames: string[]  // funções de topo usadas como VALOR (ganham um wrapper)
     staticClasses: ClassDecl[]  // classes com campos static (inicializados no main)
+    toolFuncs: Func[]     // funções marcadas com `tool` (geram JSON Schema)
 
     constructor(sema: Sema) {
         this.outParts = []
@@ -494,6 +607,7 @@ class Codegen {
         this.lambdaFuncs = []
         this.fnValNames = []
         this.staticClasses = []
+        this.toolFuncs = []
         this.tmp = 0
         this.lbl = 0
         this.term = false
@@ -505,6 +619,7 @@ class Codegen {
         this.strs = []
         this.strN = 0
         this.matchN = 0
+        this.scN = 0
         this.bindNames = []
         this.bindAddrs = []
         this.globalNames = []
@@ -699,12 +814,14 @@ class Codegen {
 
     // `a && b` / `a || b` com CURTO-CIRCUITO: `b` só é avaliado se necessário.
     // Sem isso, um guarda como `i >= 0 && xs[i].campo` avalia xs[-1] e quebra —
-    // era o comportamento antigo (and/or puros) e divergia do compilador Rust.
+    // era o comportamento antigo (and/or puros).
     genAndOr(b: Binary): string {
-        const id: i64 = this.matchN;
-        this.matchN = this.matchN + 1;
+        // slot HOISTADO no entry (ver scCount*): um por sítio de &&/||. Antes o
+        // alloca vinha aqui, no ponto de uso — dentro de um loop isso vazava a
+        // pilha a cada iteração (alloca dinâmico só é liberado no ret).
+        const id: i64 = this.scN;
+        this.scN = this.scN + 1;
         const ra: string = `%sc${id}.addr`;
-        this.emit(`  ${ra} = alloca i64`);
         const lv: string = this.truth(this.genExpr(b.lhs));
         this.emit(`  store i64 ${lv}, ptr ${ra}`);      // resultado provisório = lhs
         const cb: string = this.newTmp();
@@ -816,24 +933,46 @@ class Codegen {
         this.emit(`  ${r} = select i1 ${c}, i64 ${t}, i64 ${f}`);
         return r;
     }
-    tplPart(e: Expr): string {
+    // `esc` = o template é corpo de .lsx (Template.escapes). Aí toda parte que
+    // NÃO for `Html` sai por __lex_html_escape.
+    //
+    // Os literais do próprio markup são StrLit e chegam aqui como parte — mas
+    // quem os cria é o front-end .lsx, não o usuário, então eles são Html por
+    // construção e passam intactos (ver genTemplate).
+    tplPart(e: Expr, esc: bool): string {
         const ty: string = this.sema.typeOf(e, this.scope);
         const v: string = this.genExpr(e);
-        if (strEq(ty, "string")) { return v; }
+        if (isHtmlTy(ty)) { return v; }                      // já é markup
+        if (strEq(ty, "string")) {
+            if (esc) { return this.rtCall("__lex_html_escape", [v]); }
+            return v;
+        }
         if (isFloatTy(ty)) { return this.rtCall("__lex_f64_to_str", [v]); }
         if (strEq(ty, "bool")) { return this.boolToStr(v); }
+        // número: não há o que escapar, e evitar a chamada mantém o caso comum
+        // (contadores, índices) sem custo.
+        if (isIntLike(ty)) { return this.rtCall("__lex_i64_to_str", [v]); }
+        if (esc) { return this.rtCall("__lex_html_escape", [this.rtCall("__lex_i64_to_str", [v])]); }
         return this.rtCall("__lex_i64_to_str", [v]);
     }
     genTemplate(t: Template): string {
         if (t.parts.len() == 0) { return this.genStrLit(""); }
-        let acc: string = this.tplPart(t.parts[0]);
+        let acc: string = this.tplLit(t.parts[0], t.escapes);
         let i: i64 = 1;
         while (i < t.parts.len()) {
-            const p: string = this.tplPart(t.parts[i]);
+            const p: string = this.tplLit(t.parts[i], t.escapes);
             acc = this.rtCall("__lex_concat", [acc, p]);
             i = i + 1;
         }
         return acc;
+    }
+    // um StrLit dentro de um corpo .lsx é o markup literal escrito no arquivo —
+    // nunca escapa. Só as INTERPOLAÇÕES escapam.
+    tplLit(e: Expr, esc: bool): string {
+        return match (e) {
+            StrLit s => this.genStrLit(s.value),
+            _ => this.tplPart(e, esc)
+        };
     }
 
     // string literal → global de bytes; devolve o operando i64 (ponteiro).
@@ -958,7 +1097,7 @@ class Codegen {
         // `[a, b, c]` num parâmetro `any`: vira um ARRAY JSON de verdade (cada item
         // boxado). Antes passávamos o ponteiro cru do LexArr — e o __lex_json_eq
         // lia aquilo como se fosse um LexJson (tag de string) e caía num strcmp em
-        // lixo → SEGV. Espelha o gen_box_value do Rust.
+        // lixo → SEGV.
         if (strEq(paramTy, "any")) {
             const boxed: string = this.boxArrayLit(a);
             if (!strEq(boxed, "")) { return boxed; }
@@ -967,14 +1106,14 @@ class Codegen {
         const v: string = this.genExpr(a);
         if (!strEq(paramTy, "any")) { return this.coerce(v, at, paramTy); }
         if (strEq(at, "any")) { return v; }                                  // já é any
-        if (strEq(at, "string")) { return this.rtCall("__lex_json_str", [v]); }
+        if (strEq(at, "string") || isHtmlTy(at)) { return this.rtCall("__lex_json_str", [v]); }
         if (strEq(at, "f64")) { return this.rtCall("__lex_json_float", [v]); }
         if (strEq(at, "bool")) { return this.rtCall("__lex_json_bool", [v]); }
         if (strEq(at, "i64")) { return this.rtCall("__lex_json_num", [v]); }
         // FALLBACK: tipo desconhecido/classe/array-não-literal. NUNCA devolver o
         // valor cru — o consumidor de `any` o trata como LexJson* e faria deref de
-        // um inteiro (SEGV). Empacota como número, igual ao `_ => json_num` do Rust:
-        // a comparação vira por valor/ponteiro, mas não quebra.
+        // um inteiro (SEGV). Empacota como número (`_ => json_num`): a comparação
+        // vira por valor/ponteiro, mas não quebra.
         return this.rtCall("__lex_json_num", [v]);
     }
     // lista de args com boxing por tipo de parâmetro (ptypes[i]); "" = sem box.
@@ -1007,7 +1146,7 @@ class Codegen {
     toText(a: Expr): string {
         const ty: string = this.sema.typeOf(a, this.scope);
         const v: string = this.genExpr(a);
-        if (strEq(ty, "string")) { return v; }
+        if (strEq(ty, "string") || isHtmlTy(ty)) { return v; }   // Html = mesma célula
         if (isFloatTy(ty)) { return this.rtCall("__lex_f64_to_str", [v]); }
         if (strEq(ty, "any")) { return this.rtCall("__lex_json_as_str", [v]); }
         if (strEq(ty, "bool")) {
@@ -1086,6 +1225,12 @@ class Codegen {
     }
 
     genCall(c: Call): string {
+        // `html(s)` — só retipa: promete que `s` já é markup e não deve ser
+        // escapado no corpo de um .lsx. Não emite chamada nenhuma (o custo do
+        // opt-out de segurança tem de ser zero, senão ninguém o usa).
+        if (strEq(c.name, "html") && c.args.len() == 1) {
+            return this.genExpr(c.args[0]);
+        }
         // chamada INDIRETA: c.name é uma variável de tipo função (arrow recebido)
         if (isFunctionType(this.scope.get(c.name))) {
             const env: string = this.genLoad(c.name);            // a closure
@@ -1493,8 +1638,67 @@ class Codegen {
             CatchExpr c => this.genCatch(c),
             SpawnExpr s => this.genSpawnExpr(s),
             AwaitExpr a => this.genAwait(a),
+            ElementExpr el => this.genElement(el),
             _ => "0"
         };
+    }
+
+    // `<Card titulo="x" pontos={42} />` → `Card(new CardProps("x", 42))`.
+    //
+    // O DESUGAR É AQUI, e não no parser, porque a ordem posicional do
+    // constructor de CardProps só existe depois que o ModuleLoader mesclou
+    // todos os módulos — na hora de parsear o .lsx que USA a tag, o .lsx que a
+    // DEFINE ainda não foi lido.
+    //
+    // Erros (componente inexistente, prop faltando) já saíram no typecheck com
+    // mensagem decente; aqui só evitamos quebrar, emitindo um valor inócuo.
+    genElement(el: ElementExpr): string {
+        const fi: i64 = this.sema.funcIndex(el.name);
+        if (fi < 0) { return this.genStrLit(""); }
+        const ps: Param[] = this.sema.funcs[fi].params;
+        let args: Expr[] = [];
+        if (ps.len() > 0) {
+            const pty: string = ps[0].ty;
+            let vals: Expr[] = [];
+            // a ordem é a do CONSTRUCTOR, que é o contrato posicional real
+            for (const cp of this.sema.methodParams(pty, "constructor")) {
+                vals.push(this.propValue(el, cp));
+            }
+            const ne: NewExpr = new NewExpr(pty, vals);
+            ne.pos = el.pos;
+            args.push(ne);
+        }
+        const c: Call = new Call(el.name, args);
+        c.pos = el.pos;
+        if (!el.island) { return this.genCall(c); }
+
+        // ILHA (`client:load`): o HTML do SSR sai embrulhado num marcador, que é
+        // o que o host procura no browser p/ chamar `<Nome>_hydrate`. O servidor
+        // continua devolvendo HTML completo — a página funciona sem wasm, e a
+        // hidratação só acrescenta comportamento.
+        let ps: Expr[] = [];
+        ps.push(new StrLit(concat(concat("<lsx-island data-c=\"", el.name), "\">")));
+        ps.push(c);
+        ps.push(new StrLit("</lsx-island>"));
+        return this.genTemplate(new Template(ps));
+    }
+
+    // valor de uma prop: o atributo escrito na tag, o conteúdo (`children`, que
+    // é o slot), ou um zero do tipo certo quando falta — o typecheck já acusou.
+    propValue(el: ElementExpr, cp: Param): Expr {
+        let i: i64 = 0;
+        while (i < el.attrs.len()) {
+            if (strEq(el.attrs[i], cp.name)) { return el.vals[i]; }
+            i = i + 1;
+        }
+        if (strEq(cp.name, "children")) {
+            if (el.hasKids) { return el.children; }
+            return new StrLit("");
+        }
+        if (strEq(cp.ty, "string")) { return new StrLit(""); }
+        if (isFloatTy(cp.ty)) { return new FloatLit(0.0); }
+        if (strEq(cp.ty, "bool")) { return new BoolLit(false); }
+        return new IntLit(0);
     }
 
     // ── statements (devolvem i64 dummy p/ caberem no match-expressão) ────────
@@ -1988,7 +2192,7 @@ class Codegen {
     // guarda ficam no caminho antigo do genMatch, byte-idêntico p/ o bootstrap.)
     // `{x, y} =>` — destructuring. O struct-literal já nasce OBJETO JSON, então cada
     // campo sai por json_get + jsonAsInt. (Campos não-numéricos precisariam dos tipos
-    // do `type X = {...}`, que hoje é erasure — ver REMOVER-RUST.md.)
+    // do `type X = {...}`, que hoje é erasure.)
     genDestructure(arm: MatchArm, subj: string, ra: string, lend: string) {
         const names: string[] = splitCommas(arm.pat);
         const id: i64 = this.matchN;
@@ -2096,6 +2300,15 @@ class Codegen {
         return res;
     }
 
+    // emite, no bloco entry, um slot de alloca por sítio de curto-circuito (&&/||)
+    // do corpo — e zera o índice. genAndOr consome esses slots em ordem.
+    emitScSlots(body: Stmt[]) {
+        this.scN = 0;
+        const nsc: i64 = scCountStmts(body);
+        let si: i64 = 0;
+        while (si < nsc) { this.emit(`  %sc${si}.addr = alloca i64`); si = si + 1; }
+    }
+
     // método de classe: como genFunc, mas com `this` como 1º parâmetro.
     genMethod(cls: string, f: Func): i64 {
         this.tmp = 0;
@@ -2120,6 +2333,7 @@ class Codegen {
         collectLocals(f.body, locals);
         this.curLocals = locals;       // método nunca é main: tudo é local
         for (const lnm of this.curLocals) { this.emit(`  %${lnm}.addr = alloca i64`); }
+        this.emitScSlots(f.body);
         this.emit(`  store i64 %this, ptr %this.addr`);
         for (const p of f.params) {
             this.emit(`  store i64 %${p.name}, ptr %${p.name}.addr`);
@@ -2172,6 +2386,7 @@ class Codegen {
         // funções normais: tudo é local (param/local sombreia qualquer global homônimo).
         this.curLocals = without(locals, this.curCaptures);   // capturas vêm do env
         for (const lnm of this.curLocals) { this.emit(`  %${lnm}.addr = alloca i64`); }
+        this.emitScSlots(f.body);
         for (const p of f.params) {
             this.emit(`  store i64 %${p.name}, ptr %${p.name}.addr`);
         }
@@ -2195,6 +2410,112 @@ class Codegen {
         this.raw("}");
         this.raw("");
         return 0;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // TOOL FUNCTION JSON SCHEMA GENERATION
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    /// Converte tipo Lex para tipo JSON Schema
+    lexTypeToJsonType(ty: string): string {
+        if (strEq(ty, "i64") || strEq(ty, "i32") || strEq(ty, "i16") || strEq(ty, "i8")) {
+            return "integer";
+        }
+        if (strEq(ty, "f64") || strEq(ty, "f32")) {
+            return "number";
+        }
+        if (strEq(ty, "bool")) {
+            return "boolean";
+        }
+        if (strEq(ty, "string")) {
+            return "string";
+        }
+        if (isArrayTy(ty)) {
+            return "array";
+        }
+        // default: objeto ou tipo complexo
+        return "object";
+    }
+
+    /// Gera o JSON Schema para uma tool function como string literal
+    genToolSchemaStr(f: Func): string {
+        // Montar o schema de parâmetros
+        let props: string = "";
+        let required: string = "";
+        let firstProp: bool = true;
+        let firstReq: bool = true;
+
+        for (const p of f.params) {
+            if (!firstProp) { props = concat(props, ","); }
+            firstProp = false;
+
+            const jsonType: string = this.lexTypeToJsonType(p.ty);
+            const desc: string = p.description;
+            if (strEq(desc, "")) {
+                props = concat(props, `"${p.name}":{"type":"${jsonType}"}`);
+            } else {
+                props = concat(props, `"${p.name}":{"type":"${jsonType}","description":"${desc}"}`);
+            }
+
+            // Todos os parâmetros são required por padrão (sem defaults = obrigatório)
+            if (!firstReq) { required = concat(required, ","); }
+            firstReq = false;
+            required = concat(required, `"${p.name}"`);
+        }
+
+        // Descrição da tool
+        const desc: string = f.toolDesc;
+
+        // Montar o schema completo
+        let schema: string = `{"name":"${f.name}"`;
+        if (!strEq(desc, "")) {
+            schema = concat(schema, `,"description":"${desc}"`);
+        }
+        schema = concat(schema, `,"input_schema":{"type":"object","properties":{${props}},"required":[${required}]}}`);
+
+        return schema;
+    }
+
+    /// Gera uma função que retorna o JSON Schema da tool
+    genToolSchemaFunc(f: Func) {
+        const schemaStr: string = this.genToolSchemaStr(f);
+        const funcName: string = concat("__tool_schema_", f.name);
+
+        // Registrar a string literal
+        const strIdx: string = this.strLit(schemaStr);
+
+        // Gerar função que retorna a string
+        this.raw(`define i64 @${funcName}() {`);
+        this.raw(`  ret i64 ${strIdx}`);
+        this.raw("}");
+        this.raw("");
+    }
+
+    /// Gera a função __tool_list que retorna um array com os nomes das tools
+    genToolRegistry() {
+        if (this.toolFuncs.len() == 0) { return; }
+
+        // Gerar array de nomes
+        let names: string = "";
+        let first: bool = true;
+        for (const f of this.toolFuncs) {
+            if (!first) { names = concat(names, ","); }
+            first = false;
+            names = concat(names, `"${f.name}"`);
+        }
+        const listStr: string = concat(concat("[", names), "]");
+        const strIdx: string = this.strLit(listStr);
+
+        this.raw("define i64 @__tool_list() {");
+        this.raw(`  ret i64 ${strIdx}`);
+        this.raw("}");
+        this.raw("");
+
+        // Gerar função __tool_count que retorna o número de tools
+        this.raw("define i64 @__tool_count() {");
+        this.raw(`  ret i64 ${str(this.toolFuncs.len())}`);
+        this.raw("}");
+        this.raw("");
     }
 
     genProgram(prog: Program): i64 {
@@ -2277,7 +2598,11 @@ class Codegen {
         for (const c of prog.classes) {
             for (const mm of c.methods) { this.genMethod(c.name, mm); }
         }
-        for (const f of prog.funcs) { this.genFunc(f); }
+        for (const f of prog.funcs) {
+            this.genFunc(f);
+            // Coletar funções marcadas como tool
+            if (f.isTool) { this.toolFuncs.push(f); }
+        }
         // script-mode: statements de topo viram o `main` (i32). Convenção do lex:
         // ou há `fn main` explícito (já em funcs), ou statements de topo — não os dois.
         if (prog.main.len() > 0) {
@@ -2285,6 +2610,9 @@ class Codegen {
             const mainFn: Func = new Func("main", pp, "i32", false, prog.main);
             this.genFunc(mainFn);
         }
+        // gerar JSON Schema para cada tool function
+        for (const tf of this.toolFuncs) { this.genToolSchemaFunc(tf); }
+        this.genToolRegistry();
         // thunks de thread (1 por função spawnada/async) — depois que tudo existe.
         let ti: i64 = 0;
         while (ti < this.thunkNames.len()) {

@@ -1,9 +1,0 @@
-target
-**/node_modules
-editors/vscode-lex/out
-.git
-*.wasm
-*.o
-lex_modules
-**/lex_modules
-registry-site/data

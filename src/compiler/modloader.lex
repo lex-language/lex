@@ -7,7 +7,40 @@
 // a pendência da F6.2-B). O `main` é o do arquivo de entrada (script-mode).
 import { lexSrc } from "./lexer"
 import { Program, ClassDecl, EnumDecl, Func, Stmt, Import, Parser } from "./parser"
+import { Expr, StrLit, IntLit, FloatLit, BoolLit, Var, Call, NewExpr, MethodCall, ExprStmt } from "./parser"
 import { compileProgramToIR, compileProgramToIRT } from "./codegen"
+import { parseLsx, componentName, propsClassName } from "./lsx"
+import { write } from "libc"
+
+// erro do loader → stderr (fd 2). NUNCA stdout: o LSP fala JSON-RPC por lá e
+// qualquer print solto corromperia o protocolo.
+fn loaderErr(msg: string) {
+    const s: string = concat(msg, "\n");
+    write(2, s, len(s));
+}
+
+fn isLsx(path: string): bool {
+    const n: i64 = len(path);
+    return n > 4 && strEq(substring(path, n - 4, n), ".lsx");
+}
+
+// true se o caminho/spec já termina em extensão de fonte conhecida.
+fn hasSrcExt(s: string): bool {
+    const n: i64 = len(s);
+    if (n < 4) { return false; }
+    const e: string = substring(s, n - 4, n);
+    return strEq(e, ".lex") || strEq(e, ".lsx");
+}
+
+// `base` sem extensão → o arquivo que existe. Tenta .lex e depois .lsx; se
+// nenhum existir devolve o .lex (preserva a mensagem de erro de antes).
+fn pickExt(base: string): string {
+    const a: string = concat(base, ".lex");
+    if (exists(a)) { return a; }
+    const b: string = concat(base, ".lsx");
+    if (exists(b)) { return b; }
+    return a;
+}
 
 // diretório de um caminho ("a/b/c.lex" → "a/b"; "c.lex" → "").
 fn dirOf(path: string): string {
@@ -82,18 +115,29 @@ fn normPath(path: string): string {
     return joined;
 }
 
+// A extensão pode vir EXPLÍCITA no spec (`"./Card.lsx"`) ou ser deduzida por
+// sondagem (`"./Card"` → Card.lex, senão Card.lsx). Explícito ganha, e é o que
+// eu recomendo escrever quando existirem Card.lex e Card.lsx lado a lado — sem
+// isso a precedência do pickExt vira shadowing silencioso.
 fn resolveImport(importer: string, spec: string): string {
     const dir: string = dirOf(importer);
-    if (len(spec) >= 2 && peek8(spec, 0) == 46 && peek8(spec, 1) == 47) {   // "./"
-        const s: string = substring(spec, 2, len(spec));
-        if (strEq(dir, "")) { return concat(s, ".lex"); }
-        return normPath(concat(concat(dir, "/"), concat(s, ".lex")));
+    const rel: bool = len(spec) >= 2 && peek8(spec, 0) == 46 && peek8(spec, 1) == 47;      // "./"
+    const up: bool = len(spec) >= 3 && peek8(spec, 0) == 46 && peek8(spec, 1) == 46 && peek8(spec, 2) == 47;  // "../"
+    if (rel || up) {
+        let s: string = spec;
+        if (rel) { s = substring(spec, 2, len(spec)); }      // "../" mantém o ../
+        let base: string = s;
+        if (!strEq(dir, "")) { base = normPath(concat(concat(dir, "/"), s)); }
+        else if (up) { base = normPath(s); }
+        if (hasSrcExt(base)) { return base; }
+        return pickExt(base);
     }
-    if (len(spec) >= 3 && peek8(spec, 0) == 46 && peek8(spec, 1) == 46 && peek8(spec, 2) == 47) {  // "../"
-        if (strEq(dir, "")) { return normPath(concat(spec, ".lex")); }
-        return normPath(concat(concat(dir, "/"), concat(spec, ".lex")));
-    }
-    return findStd(concat(spec, ".lex"));   // nome "bare" → módulo std
+    if (hasSrcExt(spec)) { return findStd(spec); }
+    const std: string = findStd(concat(spec, ".lex"));      // nome "bare" → std
+    if (exists(std)) { return std; }
+    const stdx: string = findStd(concat(spec, ".lsx"));
+    if (exists(stdx)) { return stdx; }
+    return std;
 }
 
 class ModuleLoader {
@@ -103,6 +147,9 @@ class ModuleLoader {
     enums: EnumDecl[]
     funcs: Func[]
     main: Stmt[]
+    lambdaN: i64        // contador GLOBAL de arrows içadas (ver nota em load)
+    comps: string[]     // componentes .lsx já vistos (nome)
+    compPaths: string[] // …e de qual arquivo vieram, p/ a mensagem de colisão
     constructor() {
         this.visited = []
         this.externs = []
@@ -110,6 +157,26 @@ class ModuleLoader {
         this.enums = []
         this.funcs = []
         this.main = []
+        this.lambdaN = 0
+        this.comps = []
+        this.compPaths = []
+    }
+
+    // um componente .lsx exporta uma `fn <Nome>` e uma `class <Nome>Props` de
+    // topo. O espaço de nomes do lex é plano, então dois Card.lsx em pastas
+    // diferentes dariam duas `@Card` na IR. O clang até acusa, mas com uma
+    // mensagem sobre símbolo duplicado que não diz nada sobre componentes.
+    noteComponent(name: string, path: string) {
+        let i: i64 = 0;
+        while (i < this.comps.len()) {
+            if (strEq(this.comps[i], name)) {
+                loaderErr(concat(concat(concat("erro: dois componentes chamados '", name), concat("' (", this.compPaths[i])), concat(concat(" e ", path), ") — o nome de um componente e o nome do arquivo, e precisa ser unico no programa")));
+                return;
+            }
+            i = i + 1;
+        }
+        this.comps.push(name);
+        this.compPaths.push(path);
     }
 
     seen(path: string): bool {
@@ -118,12 +185,30 @@ class ModuleLoader {
     }
 
     // carrega `path` (e seus imports, antes), juntando as declarações.
+    //
+    // O `lambdaN` é semeado a partir do contador do LOADER e devolvido depois:
+    // cada Parser nasce com o contador em 0, então dois módulos com uma arrow
+    // cada produziam DOIS `__lambda_0` e o clang recusava a IR por redefinição.
     load(path: string) {
         if (this.seen(path)) { return; }
         this.visited.push(path);
         const src: string = readFile(path);
-        const p: Parser = new Parser(lexSrc(src));
-        const prog: Program = p.parseModule();
+        let prog: Program = new Program([], [], [], [], []);
+        if (isLsx(path)) {
+            // o corpo de um .lsx NÃO passa pelo lexer do lex — o parser aqui é
+            // só o "hospedeiro" dos lambdas e erros das interpolações.
+            const h: Parser = new Parser(lexSrc(""));
+            h.lambdaN = this.lambdaN;
+            this.noteComponent(componentName(path), path);
+            prog = parseLsx(path, src, h);
+            for (const lm of h.lambdas) { prog.funcs.push(lm); }
+            this.lambdaN = h.lambdaN;
+        } else {
+            const p: Parser = new Parser(lexSrc(src));
+            p.lambdaN = this.lambdaN;
+            prog = p.parseModule();
+            this.lambdaN = p.lambdaN;
+        }
         // dependências primeiro
         for (const im of prog.imports) {
             this.load(resolveImport(path, im.module));
@@ -144,10 +229,65 @@ class ModuleLoader {
     }
 }
 
+// Parseia UM arquivo pelo pipeline certo da sua extensão e devolve o Parser,
+// que carrega os erros de sintaxe (errs/errPos). É o que o `lex check` e o LSP
+// usam — sem isto um .lsx seria lexado como .lex e cuspiria uma cascata de
+// "unexpected token" em cima do markup.
+fn parseSource(path: string, src: string): Parser {
+    if (isLsx(path)) {
+        const h: Parser = new Parser(lexSrc(""));
+        parseLsx(path, src, h);
+        return h;
+    }
+    const p: Parser = new Parser(lexSrc(src));
+    p.parseModule();
+    return p;
+}
+
 // caminho do arquivo de entrada → Program único (com tudo mesclado).
+// valor default de uma prop, p/ o `main` sintetizado do entry .lsx. Espelha o
+// propValue do codegen: a célula é a mesma, só o tipo escolhe o literal.
+fn defaultForTy(ty: string): Expr {
+    if (strEq(ty, "string") || strEq(ty, "Html") || strEq(ty, "ptr")) { return new StrLit(""); }
+    if (strEq(ty, "f64") || strEq(ty, "f32")) { return new FloatLit(0.0); }
+    if (strEq(ty, "bool")) { return new BoolLit(false); }
+    return new IntLit(0);
+}
+
+// `lex run site.lsx` — um .lsx usado como ENTRADA sintetiza o próprio `main`:
+// renderiza o componente e imprime o HTML.
+//
+// Sem isto um .lsx só declara `fn <Nome>` e `class <Nome>Props`, nunca um
+// `main` — e o clang falhava com "symbol _main not found". Obrigar um .lex de
+// embrulho só para chamar Terminal.log era cerimônia pura: o arquivo já diz o
+// que quer renderizar.
+//
+// As props do componente de entrada saem no default (""/0/false): quem roda uma
+// página pela linha de comando não tem de onde tirá-las. Um componente que
+// EXIGE props segue sendo importável normalmente de outro módulo.
+fn synthLsxMain(ml: ModuleLoader, entry: string) {
+    const comp: string = componentName(entry);
+    const propsTy: string = propsClassName(comp);
+    let args: Expr[] = [];
+    for (const cd of ml.classes) {
+        if (!strEq(cd.name, propsTy)) { continue; }
+        for (const m of cd.methods) {
+            if (!strEq(m.name, "constructor")) { continue; }
+            for (const p of m.params) { args.push(defaultForTy(p.ty)); }
+        }
+    }
+    let callArgs: Expr[] = [];
+    callArgs.push(new NewExpr(propsTy, args));
+    let logArgs: Expr[] = [];
+    logArgs.push(new Call(comp, callArgs));
+    ml.main.push(new ExprStmt(new MethodCall(new Var("Terminal", 0), "log", logArgs)));
+}
+
 fn loadProgram(entry: string): Program {
     const ml: ModuleLoader = new ModuleLoader();
+    if (isLsx(entry)) { ml.load(findStd("terminal.lex")); }   // p/ o Terminal.log do main
     ml.load(entry);
+    if (isLsx(entry)) { synthLsxMain(ml, entry); }
     return ml.toProgram();
 }
 

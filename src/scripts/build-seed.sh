@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # build-seed.sh — constrói o `lex` A PARTIR DA SEMENTE, sem nenhum compilador lex
-# prévio e sem Rust. Só precisa de clang.
+# prévio. Só precisa de clang.
 #
 # A semente (lex-seed.ll.gz) é o LLVM IR do próprio compilador-em-lex (lexcli.lex),
 # gerado por ele mesmo no ponto-fixo. A IR é AGNÓSTICA de alvo (usa `ptr` opaco e
@@ -35,5 +35,5 @@ else
 fi
 
 echo
-echo "✅ bin/lex pronto — construído sem Rust, só com clang."
+echo "✅ bin/lex pronto."
 ./bin/lex version
