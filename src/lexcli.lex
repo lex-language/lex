@@ -10,10 +10,18 @@
 //   lex server [--port N] [dir]           sobe o site de uma pasta com pages/
 //   lex lsp                               Language Server por stdio
 //   lex pkg <init|add|remove|list> ...    gerenciador de pacotes (manifesto)
-//   lex version                           versão
+//   lex init [dir]                        cria estrutura de projeto (lex.toml, src/, pages/)
+//   lex version | -v                      versão
+//   lex help | -h                         ajuda
+//   lex update                            atualiza para a última versão
 //
 // (o fetch de rede do pkg ainda é parcial.)
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
+
+// ── versão ────────────────────────────────────────────────────────────────────
+const LEX_VERSION: string = "0.1.0";
+const LEX_REPO: string = "doxacode/lex-lang";
+const LEX_RELEASES_URL: string = "https://github.com/doxacode/lex-lang/releases";
 import { formatSource, formatLsx } from "./tools/fmt"
 import { runTestFile } from "./tools/testrunner"
 import { runCheck } from "./tools/checker"
@@ -372,15 +380,330 @@ fn cmdCheck(av: string[]): i64 {
     return bad;
 }
 
+// ── update ────────────────────────────────────────────────────────────────────
+// Detecta o SO e arquitetura para baixar o binário correto.
+fn detectPlatform(): string {
+    const uname: string = captureCmd("uname -s");
+    const arch: string = captureCmd("uname -m");
+    let os: string = "linux";
+    if (indexOfSub(uname, "Darwin") >= 0) { os = "macos"; }
+    else if (indexOfSub(uname, "MINGW") >= 0 || indexOfSub(uname, "MSYS") >= 0) { os = "windows"; }
+    let cpu: string = "x64";
+    if (indexOfSub(arch, "arm64") >= 0 || indexOfSub(arch, "aarch64") >= 0) { cpu = "arm64"; }
+    return concat(os, concat("-", cpu));
+}
+
+// Captura a saída de um comando num arquivo temporário.
+fn captureCmd(cmd: string): string {
+    system(`${cmd} > /tmp/lex_cap 2>/dev/null`);
+    return readFile("/tmp/lex_cap");
+}
+
+// Busca um substring dentro de uma string.
+fn indexOfSub(hay: string, needle: string): i64 {
+    const hn: i64 = len(hay);
+    const nn: i64 = len(needle);
+    let i: i64 = 0;
+    while (i + nn <= hn) {
+        if (strEq(substring(hay, i, i + nn), needle)) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Compara duas versões semver (simples: major.minor.patch).
+// Retorna: -1 se a < b, 0 se a == b, 1 se a > b.
+fn compareVersions(a: string, b: string): i64 {
+    // Remove prefixo 'v' se houver
+    let va: string = a;
+    let vb: string = b;
+    if (len(va) > 0 && peek8(va, 0) == 118) { va = substring(va, 1, len(va)); }
+    if (len(vb) > 0 && peek8(vb, 0) == 118) { vb = substring(vb, 1, len(vb)); }
+
+    // Extrai major.minor.patch de cada
+    let aParts: i64[] = [0, 0, 0];
+    let bParts: i64[] = [0, 0, 0];
+    let idx: i64 = 0;
+    let num: i64 = 0;
+    let i: i64 = 0;
+    while (i <= len(va)) {
+        if (i == len(va) || peek8(va, i) == 46) {
+            if (idx < 3) { aParts[idx] = num; idx = idx + 1; }
+            num = 0;
+        } else {
+            const c: i64 = peek8(va, i);
+            if (c >= 48 && c <= 57) { num = num * 10 + (c - 48); }
+        }
+        i = i + 1;
+    }
+    idx = 0; num = 0; i = 0;
+    while (i <= len(vb)) {
+        if (i == len(vb) || peek8(vb, i) == 46) {
+            if (idx < 3) { bParts[idx] = num; idx = idx + 1; }
+            num = 0;
+        } else {
+            const c: i64 = peek8(vb, i);
+            if (c >= 48 && c <= 57) { num = num * 10 + (c - 48); }
+        }
+        i = i + 1;
+    }
+
+    // Compara componente a componente
+    i = 0;
+    while (i < 3) {
+        if (aParts[i] < bParts[i]) { return 0 - 1; }
+        if (aParts[i] > bParts[i]) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Trim de espaços e quebras de linha.
+fn trimWhitespace(s: string): string {
+    const n: i64 = len(s);
+    let a: i64 = 0;
+    while (a < n && (peek8(s, a) == 32 || peek8(s, a) == 9 || peek8(s, a) == 13 || peek8(s, a) == 10)) { a = a + 1; }
+    let b: i64 = n;
+    while (b > a && (peek8(s, b - 1) == 32 || peek8(s, b - 1) == 9 || peek8(s, b - 1) == 13 || peek8(s, b - 1) == 10)) { b = b - 1; }
+    return substring(s, a, b);
+}
+
+// Busca a última versão disponível no GitHub Releases.
+fn fetchLatestVersion(): string {
+    const url: string = `https://api.github.com/repos/${LEX_REPO}/releases/latest`;
+    const rc: i64 = system(`curl -fsSL ${url} -o /tmp/lex_latest 2>/dev/null`);
+    if (rc != 0) { return ""; }
+    // Extrai "tag_name" do JSON (simples, sem parser completo)
+    const json: string = readFile("/tmp/lex_latest");
+    const marker: string = "\"tag_name\":";
+    const idx: i64 = indexOfSub(json, marker);
+    if (idx < 0) { return ""; }
+    // Encontra o valor entre aspas após tag_name
+    let start: i64 = idx + len(marker);
+    while (start < len(json) && peek8(json, start) != 34) { start = start + 1; }
+    start = start + 1;  // pula a aspa inicial
+    let end: i64 = start;
+    while (end < len(json) && peek8(json, end) != 34) { end = end + 1; }
+    return substring(json, start, end);
+}
+
+// Verifica se há atualização disponível e retorna a versão (ou "" se não há).
+fn checkForUpdate(): string {
+    const latest: string = fetchLatestVersion();
+    if (strEq(latest, "")) { return ""; }
+    if (compareVersions(LEX_VERSION, latest) < 0) { return latest; }
+    return "";
+}
+
+// Mostra aviso de atualização disponível.
+fn showUpdateNotice(): void {
+    const latest: string = checkForUpdate();
+    if (!strEq(latest, "")) {
+        Terminal.log("");
+        Terminal.log(`*** Nova versao disponivel: ${latest} (atual: ${LEX_VERSION})`);
+        Terminal.log("    Execute 'lex update' para atualizar.");
+    }
+}
+
+// Encontra o caminho do binário atual.
+fn findSelfPath(): string {
+    // macOS/Linux: /proc/self/exe ou argv[0] resolvido
+    if (exists("/proc/self/exe")) {
+        return trimWhitespace(captureCmd("readlink -f /proc/self/exe"));
+    }
+    // macOS não tem /proc, usa which
+    return trimWhitespace(captureCmd("which lex"));
+}
+
+// Comando update: baixa a nova versão e substitui o binário.
+fn cmdUpdate(): i64 {
+    Terminal.log(`lex ${LEX_VERSION}`);
+    Terminal.log("Verificando atualizacoes...");
+
+    const latest: string = fetchLatestVersion();
+    if (strEq(latest, "")) {
+        Terminal.log("erro: nao foi possivel verificar atualizacoes");
+        Terminal.log(`      verifique sua conexao ou acesse ${LEX_RELEASES_URL}`);
+        return 1;
+    }
+
+    if (compareVersions(LEX_VERSION, latest) >= 0) {
+        Terminal.log(`Voce ja esta na versao mais recente (${LEX_VERSION})`);
+        return 0;
+    }
+
+    Terminal.log(`Nova versao disponivel: ${latest}`);
+
+    const platform: string = detectPlatform();
+    const binName: string = concat("lex-", platform);
+    // GitHub Releases: https://github.com/REPO/releases/download/TAG/ASSET
+    const url: string = `https://github.com/${LEX_REPO}/releases/download/${latest}/${binName}`;
+
+    Terminal.log(`Baixando ${url}...`);
+
+    const tmpBin: string = "/tmp/lex_new";
+    const rc: i64 = system(`curl -fsSL -L ${url} -o ${tmpBin}`);
+    if (rc != 0) {
+        Terminal.log("erro: falha ao baixar a nova versao");
+        return 1;
+    }
+
+    // Verifica se o download foi bem sucedido (não é HTML de erro)
+    const content: string = readFile(tmpBin);
+    if (len(content) < 1000 || indexOfSub(content, "<!DOCTYPE") >= 0 || indexOfSub(content, "Not Found") >= 0) {
+        Terminal.log("erro: binario nao encontrado para esta plataforma");
+        Terminal.log(`      verifique em ${LEX_RELEASES_URL}`);
+        return 1;
+    }
+
+    // Torna executável
+    system(`chmod +x ${tmpBin}`);
+
+    // Encontra onde está o binário atual
+    const selfPath: string = findSelfPath();
+    if (strEq(selfPath, "")) {
+        Terminal.log("erro: nao consegui localizar o binario atual");
+        Terminal.log(`      mova manualmente ${tmpBin} para o seu PATH`);
+        return 1;
+    }
+
+    Terminal.log(`Atualizando ${selfPath}...`);
+
+    // Tenta substituir (pode precisar de sudo)
+    let mvRc: i64 = system(`mv ${tmpBin} ${selfPath} 2>/dev/null`);
+    if (mvRc != 0) {
+        Terminal.log("Permissao negada. Tentando com sudo...");
+        mvRc = system(`sudo mv ${tmpBin} ${selfPath}`);
+        if (mvRc != 0) {
+            Terminal.log("erro: falha ao substituir o binario");
+            Terminal.log(`      mova manualmente ${tmpBin} para ${selfPath}`);
+            return 1;
+        }
+    }
+
+    Terminal.log(`Atualizado para ${latest}!`);
+    return 0;
+}
+
+// ── help ──────────────────────────────────────────────────────────────────────
+fn showHelp(): void {
+    Terminal.log("lex — compilador e ferramentas para a linguagem Lex");
+    Terminal.log("");
+    Terminal.log("uso: lex <comando> [opcoes]");
+    Terminal.log("");
+    Terminal.log("comandos:");
+    Terminal.log("  build <arquivo.lex> [-o saida]   compila para binario nativo");
+    Terminal.log("  run <arquivo.lex> [args...]      compila e executa");
+    Terminal.log("  fmt [--check] <arquivos...>      formata codigo (in-place ou confere)");
+    Terminal.log("  test <arquivos.test.lex>...      roda suites de teste");
+    Terminal.log("  check [--json] <arquivos...>     diagnosticos em JSON");
+    Terminal.log("  server [--port N] [dir]          sobe servidor web de pages/");
+    Terminal.log("  lsp                              Language Server (stdio)");
+    Terminal.log("  pkg <init|add|remove|list>       gerenciador de pacotes");
+    Terminal.log("  init [dir]                       cria estrutura de projeto");
+    Terminal.log("  update                           atualiza para a ultima versao");
+    Terminal.log("  version                          mostra versao");
+    Terminal.log("  help                             mostra esta ajuda");
+    Terminal.log("");
+    Terminal.log("flags:");
+    Terminal.log("  -v, --version                    mostra versao");
+    Terminal.log("  -h, --help                       mostra esta ajuda");
+    Terminal.log("");
+    Terminal.log("exemplos:");
+    Terminal.log("  lex build main.lex -o app");
+    Terminal.log("  lex run server.lex --port 8080");
+    Terminal.log("  lex init meu-projeto");
+    Terminal.log("  lex server --port 3000");
+    showUpdateNotice();
+}
+
+// ── init ──────────────────────────────────────────────────────────────────────
+fn cmdInit(av: string[]): i64 {
+    let dir: string = ".";
+    if (av.len() > 2) { dir = av[2]; }
+
+    // cria diretorio se nao existir
+    if (!strEq(dir, ".") && isDir(dir) == 0) {
+        const rc: i64 = system(`mkdir -p ${shellQuote(dir)}`);
+        if (rc != 0) { Terminal.log(`erro: nao consegui criar '${dir}'`); return 1; }
+    }
+
+    // lex.toml
+    const tomlPath: string = concat(dir, "/lex.toml");
+    if (exists(tomlPath)) {
+        Terminal.log(`aviso: '${tomlPath}' ja existe, pulando`);
+    } else {
+        const tomlContent: string = "[project]\nname = \"meu-projeto\"\nversion = \"0.1.0\"\n\n[server]\nport = 3000\n";
+        writeFile(tomlPath, tomlContent);
+        Terminal.log(`criado: ${tomlPath}`);
+    }
+
+    // src/
+    const srcDir: string = concat(dir, "/src");
+    if (isDir(srcDir) == 0) {
+        system(`mkdir -p ${shellQuote(srcDir)}`);
+        Terminal.log(`criado: ${srcDir}/`);
+    }
+
+    // src/main.lex
+    const mainPath: string = concat(srcDir, "/main.lex");
+    if (exists(mainPath)) {
+        Terminal.log(`aviso: '${mainPath}' ja existe, pulando`);
+    } else {
+        const mainContent: string = "// ponto de entrada do projeto\n\nTerminal.log(\"Ola, Lex!\");\n";
+        writeFile(mainPath, mainContent);
+        Terminal.log(`criado: ${mainPath}`);
+    }
+
+    // pages/
+    const pagesDir: string = concat(dir, "/pages");
+    if (isDir(pagesDir) == 0) {
+        system(`mkdir -p ${shellQuote(pagesDir)}`);
+        Terminal.log(`criado: ${pagesDir}/`);
+    }
+
+    // pages/index.lsx
+    const indexPath: string = concat(pagesDir, "/index.lsx");
+    if (exists(indexPath)) {
+        Terminal.log(`aviso: '${indexPath}' ja existe, pulando`);
+    } else {
+        const indexContent: string = "---\nexport fn GET(req: Request): Response {\n    return this.render({ title: \"Lex\" });\n}\n---\n<!DOCTYPE html>\n<html>\n<head>\n    <title>{{ title }}</title>\n</head>\n<body>\n    <h1>Bem-vindo ao Lex!</h1>\n</body>\n</html>\n";
+        writeFile(indexPath, indexContent);
+        Terminal.log(`criado: ${indexPath}`);
+    }
+
+    // public/
+    const publicDir: string = concat(dir, "/public");
+    if (isDir(publicDir) == 0) {
+        system(`mkdir -p ${shellQuote(publicDir)}`);
+        Terminal.log(`criado: ${publicDir}/`);
+    }
+
+    Terminal.log("");
+    Terminal.log("projeto inicializado!");
+    Terminal.log("");
+    Terminal.log("proximos passos:");
+    if (!strEq(dir, ".")) { Terminal.log(`  cd ${dir}`); }
+    Terminal.log("  lex run src/main.lex       # roda o ponto de entrada");
+    Terminal.log("  lex server                 # sobe o servidor web");
+    return 0;
+}
+
 // ── despacho (script-mode → main) ────────────────────────────────────────────
 const av: string[] = args();
 if (av.len() < 2) {
-    Terminal.log("uso: lex <build|run|fmt|version> ...");
+    showHelp();
     return 1;
 }
 const cmd: string = av[1];
 let rc: i64 = 0;
-if (strEq(cmd, "version") || strEq(cmd, "--version")) { Terminal.log("lex (self-hosted) 0.1.0"); }
+if (strEq(cmd, "version") || strEq(cmd, "--version") || strEq(cmd, "-v")) {
+    Terminal.log(`lex ${LEX_VERSION}`);
+    showUpdateNotice();
+}
+else if (strEq(cmd, "help") || strEq(cmd, "--help") || strEq(cmd, "-h")) { showHelp(); }
+else if (strEq(cmd, "update")) { rc = cmdUpdate(); }
+else if (strEq(cmd, "init")) { rc = cmdInit(av); }
 else if (strEq(cmd, "build") || strEq(cmd, "compile")) { rc = cmdBuild(av, 2); }
 else if (strEq(cmd, "run")) { rc = cmdRun(av); }
 else if (strEq(cmd, "fmt")) { rc = cmdFmt(av); }
