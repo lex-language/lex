@@ -19,7 +19,7 @@
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
 
 // ── versão ────────────────────────────────────────────────────────────────────
-const LEX_VERSION: string = "0.1.0";
+const LEX_VERSION: string = "0.1.1";
 const LEX_REPO: string = "doxacode/lex-lang";
 const LEX_RELEASES_URL: string = "https://github.com/doxacode/lex-lang/releases";
 import { formatSource, formatLsx } from "./tools/fmt"
