@@ -7,7 +7,7 @@
 //   lex fmt [--check] <arquivos.lex>      formata (in-place) ou confere
 //   lex test <arquivos.test.lex>...       roda as suítes via o harness
 //   lex check [--json] <arquivos.lex>...  diagnósticos (variável indefinida) em JSON
-//   lex server [--port N] [dir]           sobe o site de uma pasta com pages/
+//   lex server [--port N] [--watch] [dir]  sobe o site de uma pasta com pages/
 //   lex lsp                               Language Server por stdio
 //   lex pkg <init|add|remove|list> ...    gerenciador de pacotes (manifesto)
 //   lex init [dir]                        cria estrutura de projeto (lex.toml, src/, pages/)
@@ -19,7 +19,7 @@
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
 
 // ── versão ────────────────────────────────────────────────────────────────────
-const LEX_VERSION: string = "0.1.3";
+const LEX_VERSION: string = "0.1.4";
 const LEX_REPO: string = "lex-language/lex";
 const LEX_RELEASES_URL: string = "https://github.com/lex-language/lex/releases";
 import { formatSource, formatLsx } from "./tools/fmt"
@@ -248,21 +248,53 @@ fn cmdRun(av: string[]): i64 {
     return system(cmd) / 256;       // WEXITSTATUS
 }
 
-// `lex server [--port N] [--dir D]` — sobe o site de uma pasta com `pages/`.
+// `lex server [--port N] [--dir D] [--watch]` — sobe o site de uma pasta com `pages/`.
 //
 // Não há servidor a escrever: as rotas SÃO os .lsx de pages/. O comando gera um
 // .lex com o roteamento, compila e executa. O fonte gerado é temporário e sai
 // no fim, mas mora na raiz do projeto enquanto existe — os imports das páginas
 // são relativos a ele.
+//
+// --watch: hot reload — monitora mudanças em pages/ e recompila automaticamente.
+
+// Concatena o conteúdo de todos os arquivos .lsx de uma pasta (para detectar mudanças).
+fn hashDir(dir: string): string {
+    let result: string = "";
+    let files: string[] = [];
+    scanPages(dir, "", files);
+    for (const f of files) {
+        const path: string = concat(dir, concat("/", f));
+        result = concat(result, readFile(path));
+    }
+    return result;
+}
+
+// Compila o servidor e retorna 0 se ok.
+fn buildServer(root: string, pages: string[], estaticos: string[], porta: i64): i64 {
+    const gen: string = concat(root, "/.lex-server.lex");
+    const bin: string = concat(root, "/.lex-server");
+    writeFile(gen, genServerSrc(pages, estaticos, porta));
+    const rc: i64 = buildFile(gen, bin);
+    if (rc != 0) {
+        Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
+        return 1;
+    }
+    remove(gen);
+    remove(concat(bin, ".ll"));
+    return 0;
+}
+
 fn cmdServer(av: string[]): i64 {
     let root: string = ".";
     let porta: i64 = 0 - 1;
     let saidaBin: string = "";        // --build <arq>: compila e NÃO executa
+    let watch: bool = false;
     let i: i64 = 2;
     while (i < av.len()) {
         if (strEq(av[i], "--port") && i + 1 < av.len()) { porta = parseInt(av[i + 1]); i = i + 2; }
         else if (strEq(av[i], "--dir") && i + 1 < av.len()) { root = av[i + 1]; i = i + 2; }
         else if (strEq(av[i], "--build") && i + 1 < av.len()) { saidaBin = av[i + 1]; i = i + 2; }
+        else if (strEq(av[i], "--watch") || strEq(av[i], "-w")) { watch = true; i = i + 1; }
         else { root = av[i]; i = i + 1; }
     }
 
@@ -291,34 +323,75 @@ fn cmdServer(av: string[]): i64 {
     for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  pages/${rel}`); }
     for (const rel of estaticos) { Terminal.log(`  /${rel}  ←  public/${rel}`); }
 
-    // o fonte gerado é efêmero, mas visível: se o build falhar, o erro aponta
-    // para ele, e ver o roteamento gerado é a forma de entender o que houve.
-    const gen: string = concat(root, "/.lex-server.lex");
-    let bin: string = concat(root, "/.lex-server");
-    if (!strEq(saidaBin, "")) { bin = saidaBin; }
-    writeFile(gen, genServerSrc(pages, estaticos, porta));
-    const rc: i64 = buildFile(gen, bin);
-    if (rc != 0) {
-        Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
-        return 1;
-    }
-    remove(gen);
-    remove(concat(bin, ".ll"));
-
-    // `--build`: entrega o binário e sai. É o que permite a imagem Docker
-    // compilar no estágio de build e RODAR num estágio sem clang — sem isto o
-    // servidor recompilaria a cada start e a imagem carregaria um LLVM inteiro.
+    // `--build`: compila e sai (para Docker)
     if (!strEq(saidaBin, "")) {
-        Terminal.log(`lex server: binario em ${bin}`);
+        const gen: string = concat(root, "/.lex-server.lex");
+        writeFile(gen, genServerSrc(pages, estaticos, porta));
+        const rc: i64 = buildFile(gen, saidaBin);
+        if (rc != 0) {
+            Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
+            return 1;
+        }
+        remove(gen);
+        remove(concat(saidaBin, ".ll"));
+        Terminal.log(`lex server: binario em ${saidaBin}`);
         Terminal.log("            rode-o com a pasta do site como diretorio atual (ele lê public/ por caminho relativo)");
         return 0;
     }
 
-    // com a raiz como cwd: o gerado lê os estáticos por caminho relativo
-    // (`public/…`), o que mantém a pasta do site movível.
-    const saida: i64 = system(`cd ${root} && ./.lex-server`) / 256;
-    remove(bin);
-    return saida;
+    // Compila o servidor
+    if (buildServer(root, pages, estaticos, porta) != 0) { return 1; }
+
+    // Modo normal: roda uma vez e sai
+    if (!watch) {
+        const bin: string = concat(root, "/.lex-server");
+        const saida: i64 = system(`cd ${root} && ./.lex-server`) / 256;
+        remove(bin);
+        return saida;
+    }
+
+    // Modo watch: hot reload
+    Terminal.log("");
+    Terminal.log("watching for changes... (Ctrl+C para sair)");
+    Terminal.log("");
+
+    let lastHash: string = hashDir(pagesDir);
+    const bin: string = concat(root, "/.lex-server");
+
+    while (true) {
+        // Roda o servidor em background
+        system(`cd ${root} && ./.lex-server &`);
+
+        // Poll por mudanças a cada 1s
+        while (true) {
+            system("sleep 1");
+            const curHash: string = hashDir(pagesDir);
+            if (!strEq(curHash, lastHash)) {
+                lastHash = curHash;
+                Terminal.log("");
+                Terminal.log("mudanca detectada, recompilando...");
+
+                // Mata o servidor atual
+                system("pkill -f '.lex-server' 2>/dev/null");
+
+                // Re-escaneia páginas (pode ter novas)
+                pages = [];
+                scanPages(pagesDir, "", pages);
+                pages = sortStrs(pages);
+
+                // Recompila
+                if (buildServer(root, pages, estaticos, porta) != 0) {
+                    Terminal.log("erro na compilacao, aguardando proxima mudanca...");
+                } else {
+                    Terminal.log("recompilado!");
+                    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  pages/${rel}`); }
+                }
+                break;  // sai do loop interno para reiniciar o servidor
+            }
+        }
+    }
+
+    return 0;
 }
 
 fn cmdFmt(av: string[]): i64 {
@@ -609,7 +682,7 @@ fn showHelp(): void {
     Terminal.log("  fmt [--check] <arquivos...>      formata codigo (in-place ou confere)");
     Terminal.log("  test <arquivos.test.lex>...      roda suites de teste");
     Terminal.log("  check [--json] <arquivos...>     diagnosticos em JSON");
-    Terminal.log("  server [--port N] [dir]          sobe servidor web de pages/");
+    Terminal.log("  server [--port N] [--watch] [dir] sobe servidor web de pages/");
     Terminal.log("  lsp                              Language Server (stdio)");
     Terminal.log("  pkg <init|add|remove|list>       gerenciador de pacotes");
     Terminal.log("  init [dir]                       cria estrutura de projeto");
