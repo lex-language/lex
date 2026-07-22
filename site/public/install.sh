@@ -62,8 +62,8 @@ chmod +x "$BIN_DIR/lex"
 
 # Sanity: every build links the C runtime, so a lex without it can only report
 # its version. findRuntime() looks here (see src/compiler/modloader.lex).
-if [ ! -f "$INSTALL_DIR/lib/runtime.c" ]; then
-    echo "  Error: lib/runtime.c missing from the release tarball"
+if [ ! -f "$INSTALL_DIR/lib/runtime.c" ] || [ ! -d "$INSTALL_DIR/lib/std" ]; then
+    echo "  Error: lib/runtime.c or lib/std missing from the release tarball"
     exit 1
 fi
 
@@ -75,6 +75,7 @@ if [ -x "$BIN_DIR/lex" ]; then
     echo ""
     echo "  Location: $BIN_DIR/lex"
     echo "  Runtime:  $INSTALL_DIR/lib/runtime.c"
+    echo "  Stdlib:   $INSTALL_DIR/lib/std"
     echo ""
 
     # Check if already in PATH

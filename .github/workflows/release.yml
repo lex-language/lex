@@ -77,6 +77,9 @@ jobs:
           # ele o binario instalado so consegue responder `lex version` — era o
           # furo da distribuicao. findRuntime() procura em <install>/lib.
           cp src/runtime.c dist/lib/runtime.c
+          # …e a BIBLIOTECA PADRAO. Sem ela so compila quem nao importa nada:
+          # `import { … } from "http"` nao resolveria e o link falharia.
+          cp -R src/std dist/lib/std
           tar -czf lex-${{ matrix.alvo }}.tar.gz -C dist bin lib
           shasum -a 256 lex-${{ matrix.alvo }}.tar.gz > lex-${{ matrix.alvo }}.tar.gz.sha256
 

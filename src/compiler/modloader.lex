@@ -55,9 +55,30 @@ fn dirOf(path: string): string {
     return substring(path, 0, cut);
 }
 
-// acha "src/std/<rel>" subindo diretórios — é como um `import { x } from "libc"`
-// (nome "bare") vira um caminho. Tenta src/std/, ../src/std/, … Roda de qualquer subpasta.
+// Raiz da instalação: $LEX_INSTALL_DIR, senão $HOME/.lex (o mesmo par que o
+// install.sh usa). "" quando não dá para saber.
+fn lexHome(): string {
+    const custom: string = getenv("LEX_INSTALL_DIR");
+    if (len(custom) > 0) { return custom; }
+    const home: string = getenv("HOME");
+    if (len(home) > 0) { return concat(home, "/.lex"); }
+    return "";
+}
+
+// acha "src/std/<rel>" — é como um `import { x } from "libc"` (nome "bare")
+// vira um caminho.
+//
+// Vale a MESMA regra do runtime.c (ver findRuntime): um `lex` instalado não tem
+// o repositório por perto, e sem isto qualquer programa com `import` falhava no
+// link ("undefined symbol: @argPort" e afins) — só quem não importava nada
+// compilava. Dentro do repo o fonte continua ganhando do instalado.
 fn findStd(rel: string): string {
+    const explicito: string = getenv("LEX_STD");
+    if (len(explicito) > 0) {
+        const cand0: string = concat(concat(explicito, "/"), rel);
+        if (exists(cand0)) { return cand0; }
+    }
+
     let prefix: string = "";
     let i: i64 = 0;
     while (i < 8) {
@@ -66,6 +87,13 @@ fn findStd(rel: string): string {
         prefix = concat(prefix, "../");
         i = i + 1;
     }
+
+    const raiz: string = lexHome();
+    if (len(raiz) > 0) {
+        const inst: string = concat(raiz, concat("/lib/std/", rel));
+        if (exists(inst)) { return inst; }
+    }
+
     return concat("src/std/", rel);
 }
 
@@ -80,8 +108,7 @@ fn findStd(rel: string): string {
 //   1. $LEX_RUNTIME       — o caminho exato, para quem quer mandar
 //   2. ./src/runtime.c    — subindo diretórios: é o repo, e dentro dele o
 //                           runtime do FONTE tem de ganhar do instalado
-//   3. $LEX_INSTALL_DIR   — onde o install.sh instalou (se foi customizado)
-//   4. $HOME/.lex         — o default do install.sh
+//   3. a raiz da instalação (lexHome): $LEX_INSTALL_DIR, senão $HOME/.lex
 fn runtimeUnder(dir: string): string {
     if (len(dir) == 0) { return ""; }
     const cand: string = concat(dir, "/lib/runtime.c");
@@ -102,13 +129,8 @@ fn findRuntime(): string {
         i = i + 1;
     }
 
-    const instalado: string = runtimeUnder(getenv("LEX_INSTALL_DIR"));
+    const instalado: string = runtimeUnder(lexHome());
     if (len(instalado) > 0) { return instalado; }
-    const home: string = getenv("HOME");
-    if (len(home) > 0) {
-        const padrao: string = runtimeUnder(concat(home, "/.lex"));
-        if (len(padrao) > 0) { return padrao; }
-    }
 
     return "src/runtime.c";
 }
