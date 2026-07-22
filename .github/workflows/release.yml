@@ -32,8 +32,12 @@ jobs:
             alvo: linux-x64
           - runner: ubuntu-24.04-arm
             alvo: linux-arm64
-          - runner: macos-13          # runner Intel
+          # NÃO existe mais runner macOS Intel (o macos-13 foi aposentado e a
+          # vaga fica em fila para sempre). Aqui o cross FUNCIONA: o alvo macOS
+          # linka com o clang do sistema + SDK, ao contrário do alvo Linux.
+          - runner: macos-latest
             alvo: macos-x64
+            cross: macos-x64
           - runner: macos-latest      # runner Apple Silicon
             alvo: macos-arm64
     runs-on: ${{ matrix.runner }}
@@ -66,7 +70,11 @@ jobs:
           mkdir -p dist
           # o tar tem de conter o binário chamado `lex` na RAIZ: o install.sh
           # extrai direto em $BIN_DIR e depois faz chmod +x "$BIN_DIR/lex".
-          cp bin/lex dist/lex
+          if [ -n "${{ matrix.cross }}" ]; then
+            ./bin/lex build src/lexcli.lex --target ${{ matrix.cross }} -o dist/lex
+          else
+            cp bin/lex dist/lex
+          fi
           tar -czf lex-${{ matrix.alvo }}.tar.gz -C dist lex
           shasum -a 256 lex-${{ matrix.alvo }}.tar.gz > lex-${{ matrix.alvo }}.tar.gz.sha256
 
