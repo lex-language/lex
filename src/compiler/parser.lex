@@ -18,7 +18,7 @@
 // Quebras de linha são INVISÍVEIS p/ peek/advance.
 // TODO: defer/fail, compound assign (+=,++), try/catch/spawn/await/arrow, e as
 //   declarações de topo type/interface/declare (não usadas pelo compilador).
-import { lexSrc, Token, Tok } from "./lexer"
+import { lexSrc, Token, Tok, escChar } from "./lexer"
 
 // ── AST: expressões ──────────────────────────────────────────────────────────
 class Expr {}
@@ -146,10 +146,19 @@ class TryExpr extends Expr {
     constructor(call: Expr) { this.call = call }
 }
 // `expr catch fallback` — se o callee falhou, limpa o erro e usa `handler`.
+//
+// Na forma em BLOCO (`expr catch { … }`) o handler não é um valor e sim uma
+// sequência de statements, que normalmente desvia (`return`/`fail`). Se ela
+// cair fora sem desviar, a expressão vale 0 — é o que `handler` guarda.
 class CatchExpr extends Expr {
     lhs: Expr
     handler: Expr
-    constructor(lhs: Expr, handler: Expr) { this.lhs = lhs; this.handler = handler }
+    body: Stmt[]        // os statements do bloco; vazio na forma de expressão
+    isBlock: bool
+    constructor(lhs: Expr, handler: Expr) {
+        this.lhs = lhs; this.handler = handler
+        this.body = []; this.isBlock = false
+    }
 }
 // `spawn f(args)` — lança uma thread (pthread); avalia p/ o handle (Future).
 class SpawnExpr extends Expr {
@@ -443,6 +452,15 @@ class Parser {
         const e: Expr = this.parseBin(1);
         if (this.peekKind() == Tok.Catch) {
             this.advance();
+            // `catch { … }`: o handler é um BLOCO. Antes isto caía no
+            // parseBin, que via o `{` e devolvia uma Var de erro — a IR saía
+            // com `%<?>.addr` e o único aviso vinha do clang, sem dizer onde.
+            if (this.peekKind() == Tok.LBrace) {
+                const cb: CatchExpr = new CatchExpr(e, new IntLit(0));
+                cb.body = this.parseBlock();
+                cb.isBlock = true;
+                return cb;
+            }
             return new CatchExpr(e, this.parseBin(1));
         }
         return e;
@@ -752,11 +770,15 @@ class Parser {
                 parts.push(e);
                 continue;
             }
-            if (c == 92 && i + 1 < n) {                                // escape \X
-                const e: i64 = peek8(raw, i + 1);
-                if (e == 110) { lit = concat(lit, "\n"); }
-                else if (e == 116) { lit = concat(lit, "\t"); }
-                else { lit = concat(lit, charAt(raw, i + 1)); }
+            // escape \X — a MESMA tabela das strings entre aspas (`escChar`).
+            // Aqui havia uma cópia menor dela, que conhecia só \n e \t: um \r
+            // caía no default e virava um 'r' literal. Como é template que monta
+            // cabeçalho HTTP, o bloco de cabeçalhos nunca terminava de verdade e
+            // o cliente lia o início do corpo como se fosse cabeçalho.
+            // O default de escChar devolve o char original, então `\``  e `\$`
+            // (só de template) seguem passando literais.
+            if (c == 92 && i + 1 < n) {
+                lit = concat(lit, escChar(peek8(raw, i + 1), charAt(raw, i + 1)));
                 i = i + 2;
                 continue;
             }

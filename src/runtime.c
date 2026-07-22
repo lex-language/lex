@@ -615,9 +615,27 @@ typedef struct LexBlock {
 // (uma global) quanto no multi-thread (tabela tid->arena).
 LexBlock **lex_arena_slot(void);
 #define lex_arena (*lex_arena_slot())
+long long *lex_ctx_slot(void);
+#define lex_ctx (*lex_ctx_slot())
 #else
 static LEX_TLS LexBlock *lex_arena = 0;
+static LEX_TLS long long lex_ctx = 0;
 #endif
+
+// ── contexto da requisição, por thread (o objeto `Lex` dos .lsx) ─────────────
+// Uma célula i64 que guarda o ponteiro do LexCtx montado por std/web para a
+// requisição corrente. Mora ao lado da arena, e pela mesma razão: o servidor
+// faz `spawn` por conexão, então um global simples seria corrida entre duas
+// requisições concorrentes — cada thread precisa do SEU contexto.
+//
+// A vida do objeto é a da arena da thread (o thunk do spawn a libera quando a
+// conexão termina), então não há o que liberar aqui.
+long long __lex_ctx_set(long long v) { lex_ctx = v; return v; }
+long long __lex_ctx_get(void) { return lex_ctx; }
+// existe contexto nesta thread? o lex não tem `null` para comparar contra uma
+// referência de classe, então o teste "há requisição?" vem daqui.
+long long __lex_ctx_has(void) { return lex_ctx != 0; }
+void __lex_ctx_clear(void) { lex_ctx = 0; }
 
 static char *lex_alloc(size_t n) {
     n = (n + 7) & ~(size_t)7; // arredonda p/ múltiplo de 8: mantém i64/ptr alinhados
@@ -2127,42 +2145,51 @@ int memcmp(const void *a, const void *b, size_t n) {
 // Caminho rápido: enquanto nenhuma thread foi criada, usa uma única global (a
 // thread principal). Ao 1º spawn, passa a indexar por tid (gettid). Isso evita
 // montar TLS (%fs/tpidr) à mão num binário sem CRT.
+// A linha da tabela carrega TODO o estado por-thread: a arena e o contexto da
+// requisição (`Lex` dos .lsx). Uma linha só, uma busca só — se fossem duas
+// tabelas, cada alocação pagaria a busca duas vezes.
 #define LEX_ARENA_SLOTS 4096
-static LexBlock *lex_arena_main = 0;
+typedef struct { long tid; LexBlock *arena; long long ctx; } LexSlot;
+static LexSlot lex_slot_main = {0, 0, 0};
 static long lex_main_tid = 0;
 static volatile int lex_any_threads = 0;
 static volatile int lex_arena_lock = 0;
-static struct { long tid; LexBlock *arena; } lex_arena_tab[LEX_ARENA_SLOTS];
+static LexSlot lex_arena_tab[LEX_ARENA_SLOTS];
 
-LexBlock **lex_arena_slot(void) {
-    if (!lex_any_threads) return &lex_arena_main;
+static LexSlot *lex_slot_row(void) {
+    if (!lex_any_threads) return &lex_slot_main;
     long tid = lex_sc0(SYS_gettid);
-    if (tid == lex_main_tid) return &lex_arena_main;
+    if (tid == lex_main_tid) return &lex_slot_main;
     lex_spin_lock(&lex_arena_lock);
     int freei = -1;
     for (int i = 0; i < LEX_ARENA_SLOTS; i++) {
         if (lex_arena_tab[i].tid == tid) {
             lex_spin_unlock(&lex_arena_lock);
-            return &lex_arena_tab[i].arena;
+            return &lex_arena_tab[i];
         }
         if (freei < 0 && lex_arena_tab[i].tid == 0) freei = i;
     }
-    if (freei < 0) { // tabela cheia: degrada para a arena principal (raro)
+    if (freei < 0) { // tabela cheia: degrada para a linha principal (raro)
         lex_spin_unlock(&lex_arena_lock);
-        return &lex_arena_main;
+        return &lex_slot_main;
     }
     lex_arena_tab[freei].tid = tid;
     lex_arena_tab[freei].arena = 0;
-    LexBlock **r = &lex_arena_tab[freei].arena;
+    lex_arena_tab[freei].ctx = 0;
+    LexSlot *r = &lex_arena_tab[freei];
     lex_spin_unlock(&lex_arena_lock);
     return r;
 }
+LexBlock **lex_arena_slot(void) { return &lex_slot_row()->arena; }
+long long *lex_ctx_slot(void) { return &lex_slot_row()->ctx; }
+
 static void lex_arena_drop(long tid) {
     lex_spin_lock(&lex_arena_lock);
     for (int i = 0; i < LEX_ARENA_SLOTS; i++)
         if (lex_arena_tab[i].tid == tid) {
             lex_arena_tab[i].tid = 0;
             lex_arena_tab[i].arena = 0;
+            lex_arena_tab[i].ctx = 0;
             break;
         }
     lex_spin_unlock(&lex_arena_lock);
@@ -2647,39 +2674,47 @@ static void lex_spin_lock(volatile int *l) {
 }
 static void lex_spin_unlock(volatile int *l) { __sync_lock_release(l); }
 
-// --- arena por thread sem TLS: tabela tid -> arena (GetCurrentThreadId) ------
+// --- estado por thread sem TLS: tabela tid -> {arena, ctx} (GetCurrentThreadId)
+// Espelha a tabela do Linux freestanding — ver a nota lá sobre por que a arena
+// e o contexto da requisição dividem a MESMA linha.
 #define LEX_ARENA_SLOTS 4096
-static LexBlock *lex_arena_main = 0;
+typedef struct { long tid; LexBlock *arena; long long ctx; } LexSlot;
+static LexSlot lex_slot_main = {0, 0, 0};
 static long lex_main_tid = 0;
 static volatile int lex_any_threads = 0;
-static struct { long tid; LexBlock *arena; } lex_arena_tab[LEX_ARENA_SLOTS];
+static LexSlot lex_arena_tab[LEX_ARENA_SLOTS];
 
-LexBlock **lex_arena_slot(void) {
-    if (!lex_any_threads) return &lex_arena_main;
+static LexSlot *lex_slot_row(void) {
+    if (!lex_any_threads) return &lex_slot_main;
     long tid = (long)GetCurrentThreadId();
-    if (tid == lex_main_tid) return &lex_arena_main;
+    if (tid == lex_main_tid) return &lex_slot_main;
     lex_spin_lock(&lex_arena_lock);
     int freei = -1;
     for (int i = 0; i < LEX_ARENA_SLOTS; i++) {
         if (lex_arena_tab[i].tid == tid) {
             lex_spin_unlock(&lex_arena_lock);
-            return &lex_arena_tab[i].arena;
+            return &lex_arena_tab[i];
         }
         if (freei < 0 && lex_arena_tab[i].tid == 0) freei = i;
     }
-    if (freei < 0) { lex_spin_unlock(&lex_arena_lock); return &lex_arena_main; }
+    if (freei < 0) { lex_spin_unlock(&lex_arena_lock); return &lex_slot_main; }
     lex_arena_tab[freei].tid = tid;
     lex_arena_tab[freei].arena = 0;
-    LexBlock **r = &lex_arena_tab[freei].arena;
+    lex_arena_tab[freei].ctx = 0;
+    LexSlot *r = &lex_arena_tab[freei];
     lex_spin_unlock(&lex_arena_lock);
     return r;
 }
+LexBlock **lex_arena_slot(void) { return &lex_slot_row()->arena; }
+long long *lex_ctx_slot(void) { return &lex_slot_row()->ctx; }
+
 static void lex_arena_drop(long tid) {
     lex_spin_lock(&lex_arena_lock);
     for (int i = 0; i < LEX_ARENA_SLOTS; i++)
         if (lex_arena_tab[i].tid == tid) {
             lex_arena_tab[i].tid = 0;
             lex_arena_tab[i].arena = 0;
+            lex_arena_tab[i].ctx = 0;
             break;
         }
     lex_spin_unlock(&lex_arena_lock);

@@ -55,6 +55,11 @@ fn tyAssignable(got: string, want: string, sema: Sema): bool {
     if (isFloatTy(want) && (isFloatTy(got) || tyIsInt(got))) { return true; }
     // `ptr` e `string` são a MESMA célula (uma string é um char*): intercambiáveis.
     if (tyIsRaw(want) && tyIsRaw(got)) { return true; }
+    // `ptr` → inteiro: também a mesma célula, e é COMO se faz aritmética de
+    // ponteiro aqui (`const base: i64 = buf; … base + got` — ver readN em
+    // std/pg.lex). Só `ptr`, de propósito: `string`/`Html` ficam de fora para
+    // que `const n: i64 = "x"` continue sendo erro.
+    if (tyIsInt(want) && strEq(got, "ptr")) { return true; }
     if (isFunctionType(want) || isFunctionType(got)) { return true; }   // leniente
     // arrays: `[]` vazio vira "?[]"; elemento por elemento
     if (isArrayTy(want) && isArrayTy(got)) {

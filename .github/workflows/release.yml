@@ -1,0 +1,101 @@
+# release.yml — publica os binários que o `install.sh` baixa.
+#
+# O site serve `https://lex-lang.doxacode.com.br/install.sh`, e aquele script faz:
+#
+#   curl -fsSL https://github.com/lex-language/lex/releases/latest/download/lex-$OS-$ARCH.tar.gz | tar -xz
+#
+# Então os nomes aqui (lex-linux-x64, lex-macos-arm64, …) são um CONTRATO com o
+# site/public/install.sh — mudar um exige mudar o outro.
+#
+# Cada alvo é construído NATIVAMENTE, num runner da própria plataforma, e não por
+# cross-compile. Motivo concreto: o runtime freestanding usado por
+# `lex build --target linux-*` não implementa `__lex_args`, e o compilador chama
+# `args()` — o link falha com "undefined symbol: __lex_args". Enquanto isso não
+# for resolvido, cross para Linux não serve para distribuir o próprio lex.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:      # permite gerar uma release à mão pela aba Actions
+
+permissions:
+  contents: write         # necessário para criar a release e subir os assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            alvo: linux-x64
+          - runner: ubuntu-24.04-arm
+            alvo: linux-arm64
+          - runner: macos-13          # runner Intel
+            alvo: macos-x64
+          - runner: macos-latest      # runner Apple Silicon
+            alvo: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # A semente é IR com ponteiro opaco (`ptr`), que exige LLVM >= 15.
+      - name: clang (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang
+          clang --version
+
+      - name: clang (macOS)
+        if: runner.os == 'macOS'
+        run: clang --version
+
+      # Constrói a partir da semente E valida o ponto-fixo. Se a semente estiver
+      # dessincronizada do fonte, a release nem chega a ser publicada.
+      - name: bootstrap + ponto-fixo
+        run: ./src/scripts/build-seed.sh
+
+      # o binário recém-nascido tem de ser capaz de rodar
+      - name: sanidade
+        run: ./bin/lex version
+
+      - name: empacota
+        run: |
+          mkdir -p dist
+          # o tar tem de conter o binário chamado `lex` na RAIZ: o install.sh
+          # extrai direto em $BIN_DIR e depois faz chmod +x "$BIN_DIR/lex".
+          cp bin/lex dist/lex
+          tar -czf lex-${{ matrix.alvo }}.tar.gz -C dist lex
+          shasum -a 256 lex-${{ matrix.alvo }}.tar.gz > lex-${{ matrix.alvo }}.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lex-${{ matrix.alvo }}
+          path: |
+            lex-${{ matrix.alvo }}.tar.gz
+            lex-${{ matrix.alvo }}.tar.gz.sha256
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: lista o que vai subir
+        run: ls -lh artifacts
+
+      # `latest/download/...` (o que o install.sh usa) só resolve para releases
+      # NÃO-draft e não-prerelease.
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          # numa execução manual não há tag; cai numa release fixa `nightly`.
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}

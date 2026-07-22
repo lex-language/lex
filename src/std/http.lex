@@ -17,21 +17,7 @@
 
 import { lexListen, lexAccept } from "./socket";
 import { read, write, close, strlen, malloc } from "./libc";
-
-// CRLF montado byte a byte (13, 10).
-//
-// ATENÇÃO: o lexer não suporta o escape `\r` — num literal ele vira um 'r'
-// literal (verificável: `X\r\nY` sai como 58 72 0a 59). Com isso o bloco de
-// cabeçalhos HTTP nunca terminava de verdade, e o cliente engolia o início do
-// corpo como se fossem cabeçalhos (além de ver `charset=utf-8r`, inválido).
-// Enquanto o escape não existir na linguagem, o CR vem daqui.
-fn crlf(): string {
-    const p: ptr = alloc(3);
-    poke8(p, 0, 13);
-    poke8(p, 1, 10);
-    poke8(p, 2, 0);
-    return p;
-}
+import { LexCtx, lexCtxBegin, lexCtxEnd, lexResponse, lexDocument, isHtmlResponse } from "./web";
 
 // Texto do status HTTP a partir do código (o necessário para uma API simples).
 function httpStatus(code: i64): string {
@@ -105,10 +91,7 @@ class Conn {
     // corpo da requisição (depois da linha em branco que fecha o cabeçalho).
     // O separador é CRLF CRLF de verdade — os clientes mandam 0d 0a 0d 0a.
     body(): string {
-        const nl: string = crlf();
-        const sep: string = concat(nl, nl);
-        const marker: i64 = indexOf(this.raw, sep);
-        free(nl);
+        const marker: i64 = indexOf(this.raw, "\r\n\r\n");
         if (marker < 0) { return ""; }
         return substring(this.raw, marker + 4, len(this.raw));
     }
@@ -126,9 +109,7 @@ class Conn {
     // resposta completa com status e Content-Type quaisquer (API/JSON), depois
     // fecha a conexão. Libera o buffer da requisição (já consumido aqui).
     respondWith(status: i64, ctype: string, body: ptr) {
-        const nl: string = crlf();
-        const header: ptr = `HTTP/1.1 ${httpStatus(status)}${nl}Content-Type: ${ctype}${nl}Content-Length: ${strlen(body)}${nl}Connection: close${nl}${nl}`;
-        free(nl);          // o header já copiou os bytes para a arena
+        const header: ptr = `HTTP/1.1 ${httpStatus(status)}\r\nContent-Type: ${ctype}\r\nContent-Length: ${strlen(body)}\r\nConnection: close\r\n\r\n`;
         this.send(header);
         this.send(body);
         free(this.raw);
@@ -153,6 +134,26 @@ function serveConnRaw(conn: i64, handler: (Conn) => i64) {
     handler(c);
 }
 
+// Uma conexão servindo PÁGINAS .lsx. Instala o contexto da requisição nesta
+// thread — é o `Lex` que as páginas enxergam, sem importar nada — chama o
+// handler e monta a resposta a partir do que a página deixou em `Lex.status`,
+// `Lex.contentType` e `Lex.location`.
+//
+// Roda numa thread por conexão, e o contexto é por thread: duas requisições
+// simultâneas não se enxergam.
+function servePage(conn: i64, handler: (LexCtx) => string) {
+    const c: Conn = new Conn(conn);
+    c.recv();
+    const ctx: LexCtx = lexCtxBegin(c.raw);
+    let body: string = handler(ctx);
+    // a página devolveu um COMPONENTE; o envelope do documento entra aqui.
+    if (isHtmlResponse(ctx)) { body = lexDocument(ctx, body); }
+    c.send(lexResponse(ctx, body));
+    lexCtxEnd();
+    free(c.raw);
+    close(c.conn);
+}
+
 // The listening server. `new Server(port)` then `start(handler)`.
 class Server {
     port: i64
@@ -174,6 +175,24 @@ class Server {
             const conn: i64 = lexAccept(this.fd);
             if (conn > 0) {
                 spawn serveConn(conn, handler);
+            }
+        }
+        return 0;
+    }
+
+    // Serve PÁGINAS: o handler recebe o contexto da requisição (o mesmo `Lex`
+    // que o .lsx enxerga) e devolve só o corpo. Status, Content-Type e redirect
+    // saem do contexto, então quem decide um 404 pode ser a própria página.
+    startPages(handler: (LexCtx) => string): i64! {
+        this.fd = lexListen(this.port);
+        if (this.fd < 0) {
+            fail 1;
+        }
+        Terminal.log(`lex listening on http://localhost:${this.port}`);
+        while (1 == 1) {
+            const conn: i64 = lexAccept(this.fd);
+            if (conn > 0) {
+                spawn servePage(conn, handler);
             }
         }
         return 0;

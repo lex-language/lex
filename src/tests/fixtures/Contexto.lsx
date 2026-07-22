@@ -1,0 +1,8 @@
+---
+// Fixture do contexto de requisição. O que prova o ponto é o que NÃO está
+// escrito aqui: não há `import`. `Lex` é nativo do formato .lsx — quem o
+// declara é o compilador (ver usesLexCtx em src/compiler/lsx.lex).
+const nome: string = Lex.params.get("nome");
+if (len(nome) == 0) { Lex.notFound(); }
+---
+<p>{nome}|{Lex.request.method}|{Lex.request.path}|{Lex.status}</p>

@@ -52,6 +52,29 @@ describe("linguagem completa (e2e)", () => {
         test("erros: try/catch", () => {
                 expect(runSrc("fn d(a: i64, b: i64): i64! { if (b == 0) { fail 1; } return a / b; }\nfn main(): i32 {\nlet x: i64 = d(10, 0) catch 99;\nreturn x - 99;\n}", "c8")).toBe(0);
         });
+        // regressão: um `const` de TOPO ao lado de um `fn main` explícito virava
+        // local do main. Uma função que o lesse não achava símbolo, e o único
+        // aviso era do clang: "use of undefined value '%P.addr'".
+        test("const de módulo é lido por outra função", () => {
+                expect(runSrc("const P: i64 = 42;\nfn q(): i64 { return P; }\nfn main(): i32 {\nreturn q() - 42;\n}", "cg1")).toBe(0);
+        });
+        // …e o const de topo continua sendo INICIALIZADO antes do corpo do main.
+        test("const de módulo tem valor dentro do main", () => {
+                expect(runSrc("const S: i64 = 7;\nfn main(): i32 {\nreturn S - 7;\n}", "cg2")).toBe(0);
+        });
+        // regressão: `catch { bloco }` parseava para uma Var de erro e só o clang
+        // reclamava ("expected value token", com `%<?>.addr`).
+        test("erros: catch em bloco desvia", () => {
+                expect(runSrc("fn d(): i64! { fail 1; }\nfn main(): i32 {\nconst x: i64 = d() catch { return 0; };\nreturn 1;\n}", "cb1")).toBe(0);
+        });
+        // o bloco tem escopo próprio: um `let` dentro dele precisa de alloca.
+        test("erros: catch em bloco com let e global", () => {
+                expect(runSrc("const BASE: i64 = 10;\nfn d(): i64! { fail 1; }\nfn main(): i32 {\nconst x: i64 = d() catch { const k: i64 = BASE + 32; return k - 42; };\nreturn 1;\n}", "cb2")).toBe(0);
+        });
+        // sem erro, o bloco NÃO roda e a expressão vale o resultado normal.
+        test("erros: catch em bloco não roda no caminho feliz", () => {
+                expect(runSrc("fn d(): i64! { return 5; }\nfn main(): i32 {\nconst x: i64 = d() catch { return 1; };\nreturn x - 5;\n}", "cb3")).toBe(0);
+        });
         test("OOP: herança + polimorfismo (vtable)", () => {
                 expect(runSrc("class A { f(): i64 { return 1; } }\nclass B extends A { f(): i64 { return 2; } }\nfn main(): i32 {\nlet a: A = new B();\nreturn a.f() - 2;\n}", "c9")).toBe(0);
         });

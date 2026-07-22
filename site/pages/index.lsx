@@ -1,0 +1,419 @@
+---
+// index.lsx — a landing page. Como `pages/index.lsx`, ela É a rota `/`.
+//
+// Isto é um COMPONENTE, não um documento: não há <html>, <head> nem <body> em
+// lugar nenhum. O envelope vem de lexDocument (src/std/web.lex) e o título sai
+// do contexto, logo abaixo.
+//
+// O nome do componente é o nome do ARQUIVO: este arquivo já declara uma
+// `fn index(props: indexProps): Html`. Declarar `fn index` aqui no frontmatter
+// duplicaria o símbolo (o espaço de nomes do lex é plano) e o clang recusaria
+// a IR.
+
+fn codeExample(): string {
+    return `// hello.lex
+fn main(): i32 {
+    Terminal.log("Hello, Lex!")
+    return 0
+}`
+}
+
+fn agentExample(): string {
+    return `import { Agent, agent } from "std/agent"
+import { Claude } from "std/ai/claude"
+
+const assistant = agent("code-helper")
+    .withModel(Claude.sonnet())
+    .withTools(createFileSystemTools())
+    .build()
+
+const result = assistant.run("Review my code")`
+}
+
+// O corpo de um componente ESCAPA o que interpola (é dado, não markup), então
+// o exemplo se escreve com `<` e `"` de verdade — nada de &lt; na mão.
+fn serverExample(): string {
+    return `---
+// pages/Ola.lsx — a requisicao e nativa do formato
+const nome: string = Lex.params.get("nome")
+if (len(nome) == 0) { Lex.notFound() }
+---
+<h1>Ola, {nome}!</h1>`
+}
+
+Lex.title = "Lex — The AI-Native Programming Language";
+---
+<style is:global>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0a0a0a;
+            --fg: #fafafa;
+            --accent: #3b82f6;
+            --accent-dim: #1d4ed8;
+            --gray: #71717a;
+            --gray-dark: #27272a;
+            --code-bg: #18181b;
+            --green: #22c55e;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Hero */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 80px 0;
+        }
+
+        .hero h1 {
+            font-size: clamp(3rem, 8vw, 5rem);
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 24px;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero .tagline {
+            font-size: 1.5rem;
+            color: var(--gray);
+            max-width: 600px;
+            margin-bottom: 48px;
+        }
+
+        /* Install box */
+        .install-box {
+            background: var(--code-bg);
+            border: 1px solid var(--gray-dark);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 600px;
+            margin-bottom: 32px;
+        }
+
+        .install-box label {
+            display: block;
+            font-size: 0.875rem;
+            color: var(--gray);
+            margin-bottom: 12px;
+        }
+
+        .install-cmd {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .install-cmd code {
+            flex: 1;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.95rem;
+            color: var(--green);
+            background: transparent;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--gray-dark);
+            overflow-x: auto;
+        }
+
+        .install-cmd button {
+            padding: 12px 20px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+
+        .install-cmd button:hover {
+            background: var(--accent-dim);
+        }
+
+        /* Features */
+        .features {
+            padding: 120px 0;
+            border-top: 1px solid var(--gray-dark);
+        }
+
+        .features h2 {
+            font-size: 2.5rem;
+            margin-bottom: 64px;
+            text-align: center;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 32px;
+        }
+
+        .feature {
+            background: var(--code-bg);
+            border: 1px solid var(--gray-dark);
+            border-radius: 16px;
+            padding: 32px;
+        }
+
+        .feature h3 {
+            font-size: 1.25rem;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .feature h3::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+        }
+
+        .feature p {
+            color: var(--gray);
+            font-size: 0.95rem;
+        }
+
+        /* Code examples */
+        .examples {
+            padding: 120px 0;
+            border-top: 1px solid var(--gray-dark);
+        }
+
+        .examples h2 {
+            font-size: 2.5rem;
+            margin-bottom: 64px;
+            text-align: center;
+        }
+
+        .example-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 24px;
+        }
+
+        .example {
+            background: var(--code-bg);
+            border: 1px solid var(--gray-dark);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .example-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--gray-dark);
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--gray);
+        }
+
+        .example pre {
+            padding: 20px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.875rem;
+            line-height: 1.7;
+            overflow-x: auto;
+        }
+
+        .example code {
+            color: #e4e4e7;
+        }
+
+        /* CTA */
+        .cta {
+            padding: 120px 0;
+            text-align: center;
+            border-top: 1px solid var(--gray-dark);
+        }
+
+        .cta h2 {
+            font-size: 2.5rem;
+            margin-bottom: 24px;
+        }
+
+        .cta p {
+            color: var(--gray);
+            margin-bottom: 48px;
+            font-size: 1.125rem;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 16px 32px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-dim);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--fg);
+            border: 1px solid var(--gray-dark);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--gray);
+        }
+
+        /* Footer */
+        footer {
+            padding: 48px 0;
+            border-top: 1px solid var(--gray-dark);
+            text-align: center;
+            color: var(--gray);
+            font-size: 0.875rem;
+        }
+
+        footer a {
+            color: var(--fg);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+</style>
+
+<div class="container">
+        <section class="hero">
+            <h1><span>Lex</span></h1>
+            <p class="tagline">
+                TypeScript syntax. Native performance. AI-first.
+                The language for building intelligent applications.
+            </p>
+
+            <div class="install-box">
+                <label>Install with a single command:</label>
+                <div class="install-cmd">
+                    <code>curl -fsSL https://lex-lang.org/install.sh | sh</code>
+                    <button onclick="navigator.clipboard.writeText('curl -fsSL https://lex-lang.org/install.sh | sh')">
+                        Copy
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section class="features">
+            <h2>Why Lex?</h2>
+            <div class="feature-grid">
+                <div class="feature">
+                    <h3>TypeScript Syntax</h3>
+                    <p>Write code that feels familiar. Classes, interfaces, generics, arrow functions — all the ergonomics you love.</p>
+                </div>
+                <div class="feature">
+                    <h3>Native Performance</h3>
+                    <p>Compiles directly to LLVM IR. No garbage collector, no runtime overhead. Real integers, real threads.</p>
+                </div>
+                <div class="feature">
+                    <h3>AI-Native</h3>
+                    <p>Built-in support for AI agents, tools, and LLM integration. Create intelligent applications with zero boilerplate.</p>
+                </div>
+                <div class="feature">
+                    <h3>MCP Protocol</h3>
+                    <p>First-class support for Model Context Protocol. Build MCP servers that work with Claude, Cursor, and more.</p>
+                </div>
+                <div class="feature">
+                    <h3>Single Binary</h3>
+                    <p>Your entire application compiles to one executable. No dependencies, no containers, no deployment complexity.</p>
+                </div>
+                <div class="feature">
+                    <h3>Cross-Platform</h3>
+                    <p>Target macOS, Linux, Windows, and WebAssembly from the same codebase. Write once, run everywhere.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="examples">
+            <h2>See it in action</h2>
+            <div class="example-grid">
+                <div class="example">
+                    <div class="example-header">Hello World</div>
+                    <pre><code>{codeExample()}</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-header">AI Agent</div>
+                    <pre><code>{agentExample()}</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-header">HTTP Server</div>
+                    <pre><code>{serverExample()}</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <section class="cta">
+            <h2>Ready to build?</h2>
+            <p>Get started with Lex in under a minute.</p>
+            <div class="cta-buttons">
+                <a href="https://github.com/lex-language/lex" class="btn btn-primary">
+                    View on GitHub
+                </a>
+                <a href="https://github.com/lex-language/lex#readme" class="btn btn-secondary">
+                    Documentation
+                </a>
+            </div>
+        </section>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>
+                Made with Lex.
+                <a href="https://github.com/lex-language/lex">GitHub</a>
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        // Copy button feedback
+        document.querySelector('.install-cmd button').addEventListener('click', function() {
+            const original = this.textContent;
+            this.textContent = 'Copied!';
+            setTimeout(() => this.textContent = original, 2000);
+        });
+    </script>

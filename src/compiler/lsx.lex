@@ -29,23 +29,69 @@
 // reconhece `<` logo após `return`/`=`/`(`/… Tratando o corpo inteiro como um
 // literal só, os dois problemas somem e o núcleo do compilador fica intocado.
 import { lexSrc } from "./lexer"
-import { Program, ClassDecl, ClassField, Func, Param, Stmt, Expr, ReturnStmt, AssignStmt, Field, Var, StrLit, BoolLit, Template, ElementExpr, Parser } from "./parser"
+import { Program, ClassDecl, ClassField, Func, Param, Stmt, Expr, ReturnStmt, AssignStmt, Field, Var, StrLit, BoolLit, Template, ElementExpr, Parser, Call, LetStmt, Import } from "./parser"
 
 // nome do componente a partir do caminho: "a/b/Card.lsx" → "Card".
 fn componentName(path: string): string {
+    const n: i64 = len(path);
+
+    // Dentro de `pages/` o nome é o CAMINHO inteiro a partir dali, e não só o
+    // arquivo: sob roteamento por arquivo, `index.lsx` se repete em cada pasta
+    // (é assim que `pages/docs/index.lsx` vira `/docs`), e com o nome-do-arquivo
+    // os dois viravam o mesmo símbolo `index` num espaço de nomes plano. O
+    // ModuleLoader acusava a colisão, mas o layout que a provoca é o NORMAL —
+    // então aqui ela deixa de existir: `pages/docs/index.lsx` → `docs_index`.
+    const p: i64 = afterPagesSeg(path);
+    if (p >= 0) { return sanitizeIdent(stripLsx(substring(path, p, n))); }
+
     let cut: i64 = -1;
     let i: i64 = 0;
-    const n: i64 = len(path);
     while (i < n) {
         if (peek8(path, i) == 47) { cut = i; }        // '/'
         i = i + 1;
     }
-    const base: string = substring(path, cut + 1, n);
+    return stripLsx(substring(path, cut + 1, n));
+}
+
+fn stripLsx(base: string): string {
     const bn: i64 = len(base);
     if (bn > 4 && strEq(substring(base, bn - 4, bn), ".lsx")) {
         return substring(base, 0, bn - 4);
     }
     return base;
+}
+
+// Byte seguinte ao último segmento `pages/` do caminho; -1 se não houver.
+// Tem de ser um SEGMENTO inteiro — `subpages/x.lsx` não conta.
+fn afterPagesSeg(path: string): i64 {
+    const seg: string = "pages/";
+    const sn: i64 = len(seg);
+    let achou: i64 = 0 - 1;
+    let i: i64 = 0;
+    const n: i64 = len(path);
+    while (i + sn <= n) {
+        if (strEq(substring(path, i, i + sn), seg)) {
+            if (i == 0 || peek8(path, i - 1) == 47) { achou = i + sn; }
+        }
+        i = i + 1;
+    }
+    return achou;
+}
+
+// O nome vira um SÍMBOLO na IR, então só [A-Za-z0-9_] sobrevive: uma pasta
+// `docs-api/` daria `docs-api_index`, que não é identificador. A rota continua
+// com o traço — quem é sanitizado é o símbolo, não o caminho.
+fn sanitizeIdent(s: string): string {
+    let out: string = "";
+    let i: i64 = 0;
+    while (i < len(s)) {
+        const c: i64 = peek8(s, i);
+        const ok: bool = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
+        if (ok) { out = concat(out, charAt(s, i)); }
+        else { out = concat(out, "_"); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // nome da classe de props de um componente. Ver a nota de colisão no topo.
@@ -74,6 +120,55 @@ fn afterLine(src: string, i: i64, n: i64): i64 {
     while (j < n && peek8(src, j) != 10) { j = j + 1; }
     if (j < n) { j = j + 1; }
     return j;
+}
+
+// Acha o `---` que FECHA o frontmatter; -1 se não houver.
+//
+// Não basta olhar linha a linha: o frontmatter é código lex, e uma página que
+// documenta o próprio formato tem `---` DENTRO de uma string — foi o que
+// aconteceu com a landing page. O fecho era detectado no meio do literal, o
+// corpo começava no meio de uma string e a interpolação `{nome}` do exemplo
+// virava uma variável de verdade. O erro só aparecia no clang, como
+// "use of undefined value '%nome.addr'", que não diz nada sobre o que houve.
+//
+// Então a varredura pula strings ("…", '…' e crase) e comentários (// e /*…*/)
+// — sem os comentários, um apóstrofo em "// não" abriria uma string e comeria
+// o resto do arquivo.
+fn findFmEnd(src: string, fmStart: i64, n: i64): i64 {
+    let i: i64 = fmStart;
+    let lineStart: bool = true;
+    while (i < n) {
+        if (lineStart && isDashLine(src, i, n)) { return i; }
+        const c: i64 = peek8(src, i);
+
+        if (c == 47 && i + 1 < n && peek8(src, i + 1) == 47) {        // //
+            i = afterLine(src, i, n);
+            lineStart = true;
+            continue;
+        }
+        if (c == 47 && i + 1 < n && peek8(src, i + 1) == 42) {        // /*
+            i = i + 2;
+            while (i + 1 < n && !(peek8(src, i) == 42 && peek8(src, i + 1) == 47)) { i = i + 1; }
+            i = i + 2;
+            lineStart = false;
+            continue;
+        }
+        if (c == 34 || c == 39 || c == 96) {                          // " ' `
+            const q: i64 = c;
+            i = i + 1;
+            while (i < n && peek8(src, i) != q) {
+                if (peek8(src, i) == 92) { i = i + 1; }                // escape
+                i = i + 1;
+            }
+            i = i + 1;
+            lineStart = false;
+            continue;
+        }
+
+        lineStart = c == 10;
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 // ── interpolação `{expr}` ───────────────────────────────────────────────────
@@ -299,6 +394,48 @@ fn scopeHash(comp: string): string {
 
 fn isSpaceByte(c: i64): bool { return c == 32 || c == 9 || c == 10 || c == 13; }
 
+// ── <style is:global> ───────────────────────────────────────────────────────
+// Um .lsx é um COMPONENTE: não escreve `<html>` nem `<body>`, que vêm do
+// envelope do documento (ver lexDocument em std/web.lex). Por isso um reset
+// global (`*`, `:root`, `body`) não pode ser escopado — `body[data-lsx-x]` não
+// casaria com um `<body>` que o componente nem emite. `is:global` diz "este
+// bloco sai como está", igual ao Astro.
+
+// a tag que ABRE em `i` traz `is:global`?
+fn styleIsGlobal(raw: string, i: i64, n: i64): bool {
+    let j: i64 = i;
+    while (j < n && peek8(raw, j) != 62) { j = j + 1; }      // até o '>'
+    return contains(toLower(substring(raw, i, j)), "is:global") != 0;
+}
+
+// a diretiva é do compilador, não HTML — some da saída. O espaço que a separava
+// do nome da tag vai junto, senão sobra um `<style >` na página.
+fn stripDirective(tag: string, dir: string): string {
+    let at: i64 = indexOf(toLower(tag), dir);
+    if (at < 0) { return tag; }
+    let fim: i64 = at + len(dir);
+    while (at > 0 && peek8(tag, at - 1) == 32) { at = at - 1; }
+    return concat(substring(tag, 0, at), substring(tag, fim, len(tag)));
+}
+
+// há algum <style> LOCAL? Só ele exige o atributo de escopo nas tags — se o
+// arquivo só tem estilo global, marcar cada tag com `data-lsx-…` seria ruído.
+fn hasScopedStyle(body: string): bool {
+    const low: string = toLower(body);
+    const n: i64 = len(low);
+    let i: i64 = 0;
+    while (i < n) {
+        const at: i64 = indexOf(substring(low, i, n), "<style");
+        if (at < 0) { return false; }
+        const start: i64 = i + at;
+        let j: i64 = start;
+        while (j < n && peek8(low, j) != 62) { j = j + 1; }
+        if (!contains(substring(low, start, j), "is:global")) { return true; }
+        i = j + 1;
+    }
+    return false;
+}
+
 // anexa `[attr]` a cada seletor do CSS. Anda por profundidade de chaves, então
 // as regras dentro de um `@media` também são escopadas — mas o prelúdio do
 // próprio `@media` passa intacto (não é seletor).
@@ -387,7 +524,8 @@ fn parseLsxBody(raw: string, basePos: i64, ctx: LsxCtx): Expr {
                 let k: i64 = stop;
                 while (k < n && peek8(raw, k) != 62) { k = k + 1; }   // até o '>'
                 if (k < n) { k = k + 1; }
-                if (lowerEq(nm, "style") && !strEq(ctx.attr, "")) {
+                const global: bool = lowerEq(nm, "style") && styleIsGlobal(raw, i, n);
+                if (lowerEq(nm, "style") && !strEq(ctx.attr, "") && !global) {
                     // só o MIOLO é reescrito; as tags de abertura/fecho passam
                     let open: i64 = i;
                     while (open < n && peek8(raw, open) != 62) { open = open + 1; }
@@ -395,6 +533,13 @@ fn parseLsxBody(raw: string, basePos: i64, ctx: LsxCtx): Expr {
                     lit = concat(lit, substring(raw, i, open));
                     lit = concat(lit, scopeCss(substring(raw, open, stop), ctx.attr));
                     lit = concat(lit, substring(raw, stop, k));
+                } else if (global) {
+                    // sai inteiro, sem escopo — só a diretiva não vai junto.
+                    let open: i64 = i;
+                    while (open < n && peek8(raw, open) != 62) { open = open + 1; }
+                    open = open + 1;
+                    lit = concat(lit, stripDirective(substring(raw, i, open), "is:global"));
+                    lit = concat(lit, substring(raw, open, k));
                 } else {
                     lit = concat(lit, substring(raw, i, k));
                 }
@@ -530,6 +675,36 @@ fn synthPropsCtor(cd: ClassDecl) {
     cd.methods.push(new Func("constructor", ps, "", false, body));
 }
 
+// ── o objeto `Lex` (o `Astro` do Astro) ─────────────────────────────────────
+// Uma página que menciona `Lex.` recebe, no topo de CADA função do arquivo,
+// um `const Lex: LexCtx = lexCtx();`. Com isso `Lex.request.path` é só acesso
+// a campo de um local comum — nada de namespace mágico no codegen, nada de
+// reescrever AST, e o typecheck valida os campos como valida qualquer classe.
+//
+// Por que um LOCAL e não um parâmetro do componente: a assinatura de render é
+// `Comp(props): Html`, e é ela que faz `<Card/>` compor. Passar o contexto como
+// argumento obrigaria todo componente no caminho a repassá-lo — inclusive os
+// que não o usam. O contexto mora numa slot POR THREAD (ver std/web.lex), que é
+// o que mantém duas requisições concorrentes separadas.
+//
+// A decisão é textual e por ARQUIVO, no espírito do teste de `<style` logo
+// abaixo: um .lsx que não fala de `Lex.` não paga nada — nem o import de
+// std/web, o que importa para as ilhas, que vão para o wasm.
+// `contains` é builtin e devolve i64 (0/1), não bool — daí o `!= 0`.
+fn usesLexCtx(src: string): bool { return contains(src, "Lex.") != 0; }
+
+fn lexCtxDecl(): Stmt {
+    let noArgs: Expr[] = [];
+    return new LetStmt("Lex", "LexCtx", false, new Call("lexCtx", noArgs));
+}
+
+fn withLexCtx(body: Stmt[]): Stmt[] {
+    let out: Stmt[] = [];
+    out.push(lexCtxDecl());
+    for (const s of body) { out.push(s); }
+    return out;
+}
+
 // ── .lsx → Program ──────────────────────────────────────────────────────────
 fn parseLsx(path: string, src: string, host: Parser): Program {
     const comp: string = componentName(path);
@@ -547,12 +722,7 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
     }
     if (isDashLine(src, i, n)) {
         const fmStart: i64 = afterLine(src, i, n);
-        let j: i64 = fmStart;
-        let fmEnd: i64 = -1;
-        while (j < n) {
-            if (isDashLine(src, j, n)) { fmEnd = j; break; }
-            j = afterLine(src, j, n);
-        }
+        let fmEnd: i64 = findFmEnd(src, fmStart, n);
         if (fmEnd < 0) {
             host.recordErrAt(i, "lsx: frontmatter aberto com '---' e nunca fechado");
             fmEnd = n;
@@ -586,7 +756,7 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
         body = substring(body, 0, len(body) - 1);      // apara o \n final do arquivo
     }
     let attr: string = "";
-    if (contains(toLower(body), "<style")) { attr = concat("data-lsx-", scopeHash(comp)); }
+    if (hasScopedStyle(body)) { attr = concat("data-lsx-", scopeHash(comp)); }
     const ctx: LsxCtx = new LsxCtx(host, attr);
     const tpl: Expr = parseLsxBody(body, bodyAt, ctx);
 
@@ -613,7 +783,9 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
     }
 
     // 5. a função de render: stmts do frontmatter + `return <template>`
+    const usaLex: bool = usesLexCtx(src);
     let rbody: Stmt[] = [];
+    if (usaLex) { rbody.push(lexCtxDecl()); }
     for (const s of fmProg.main) { rbody.push(s); }
     rbody.push(new ReturnStmt(true, tpl));
     let rps: Param[] = [];
@@ -626,14 +798,36 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
     // CLIENTE do componente: renomeada p/ `<Nome>_hydrate`, ela sai exportada
     // no módulo wasm (o wasm-ld usa --export-all) e é o que o host chama ao
     // encontrar a <lsx-island> correspondente no HTML.
+    //
+    // `fn get()` / `fn post()` são a metade ENDPOINT da página: renomeadas p/
+    // `<Nome>_get` / `<Nome>_post`, do mesmo jeito e pelo mesmo motivo que o
+    // hydrate. O espaço de nomes do lex é plano, então dois arquivos com um
+    // `fn get` dariam duas `@get` na IR e o clang recusaria por símbolo
+    // duplicado — a mesma armadilha que `noteComponent` já cobre p/ o render.
     let funcs: Func[] = [];
     for (const f of fmProg.funcs) {
         if (strEq(f.name, "hydrate")) { f.name = concat(comp, "_hydrate"); }
+        else if (strEq(f.name, "get")) { f.name = concat(comp, "_get"); }
+        else if (strEq(f.name, "post")) { f.name = concat(comp, "_post"); }
+        if (usaLex) { f.body = withLexCtx(f.body); }
         funcs.push(f);
     }
     funcs.push(render);
 
-    const out: Program = new Program(fmProg.imports, fmProg.enums, classes, funcs, []);
+    // 7. o import de std/web, quando o arquivo usa `Lex.`. O loader resolve os
+    // imports do Program que voltamos daqui, então declará-lo aqui basta — a
+    // página não escreve import nenhum, que é o ponto: o contexto é NATIVO do
+    // formato, não uma biblioteca que se lembra de importar.
+    let imports: Import[] = [];
+    for (const im of fmProg.imports) { imports.push(im); }
+    if (usaLex) {
+        let usados: string[] = [];
+        usados.push("LexCtx");
+        usados.push("lexCtx");
+        imports.push(new Import(usados, "web"));
+    }
+
+    const out: Program = new Program(imports, fmProg.enums, classes, funcs, []);
     out.externs = fmProg.externs;
     return out;
 }

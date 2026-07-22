@@ -401,7 +401,7 @@ fn usedInElement(el: ElementExpr, out: string[]): i64 {
 fn usedInBin(b: Binary, out: string[]): i64 { usedInExpr(b.lhs, out); usedInExpr(b.rhs, out); return 0; }
 fn usedInMC(m: MethodCall, out: string[]): i64 { usedInExpr(m.base, out); usedInExprs(m.args, out); return 0; }
 fn usedInIndex(ix: Index, out: string[]): i64 { usedInExpr(ix.base, out); usedInExpr(ix.index, out); return 0; }
-fn usedInCatch(c: CatchExpr, out: string[]): i64 { usedInExpr(c.lhs, out); usedInExpr(c.handler, out); return 0; }
+fn usedInCatch(c: CatchExpr, out: string[]): i64 { usedInExpr(c.lhs, out); usedInExpr(c.handler, out); usedInStmts(c.body, out); return 0; }
 fn usedInMatch(mt: Match, out: string[]): i64 {
     usedInExpr(mt.subject, out);
     for (const a of mt.arms) {
@@ -462,7 +462,7 @@ fn scCountExpr(e: Expr): i64 {
         Template t => scCountExprs(t.parts),
         Match mt => scCountMatch(mt),
         TryExpr t => scCountExpr(t.call),
-        CatchExpr c => scCountExpr(c.lhs) + scCountExpr(c.handler),
+        CatchExpr c => scCountExpr(c.lhs) + scCountExpr(c.handler) + scCountStmts(c.body),
         SpawnExpr sp => scCountExpr(sp.call),
         AwaitExpr aw => scCountExpr(aw.inner),
         ElementExpr el => scCountElement(el),
@@ -537,10 +537,24 @@ fn isLambdaName(name: string): bool {
 fn collectStmtLocal(s: Stmt, names: string[]): i64 {
     return match (s) { LetStmt l => addUniq(names, l.name), _ => 0 };
 }
+// `catch { … }` guarda STATEMENTS dentro de uma expressão, e os `let` deles
+// precisam de alloca como quaisquer outros — a varredura de locais tem de
+// entrar aí. Como `catch` é o operador de menor precedência, ele só aparece na
+// RAIZ da expressão de um statement; basta olhar essas raízes.
+fn collectExprLocals(e: Expr, names: string[]): i64 {
+    return match (e) { CatchExpr c => collectLocals(c.body, names), _ => 0 };
+}
+fn collectLetLocal(l: LetStmt, names: string[]): i64 {
+    addUniq(names, l.name);
+    return collectExprLocals(l.value, names);
+}
 fn collectLocals(stmts: Stmt[], names: string[]): i64 {
     for (const s of stmts) {
         match (s) {
-            LetStmt l => addUniq(names, l.name),
+            LetStmt l => collectLetLocal(l, names),
+            AssignStmt a => collectExprLocals(a.value, names),
+            ExprStmt e => collectExprLocals(e.expr, names),
+            ReturnStmt r => collectExprLocals(r.value, names),
             ForOfStmt fo => collectForOf(fo, names),
             ForStmt fr => collectForC(fr, names),
             IfStmt f => collectIf(f, names),
@@ -2141,8 +2155,16 @@ class Codegen {
         this.term = true;
         this.label(lcatch);
         this.rtCall("__lex_take_err", []);   // consome/limpa o erro
-        const h: string = this.genExpr(c.handler);
-        this.emit(`  store i64 ${h}, ptr ${ra}`);
+        // `catch { … }`: roda os statements. Se o bloco desviar (return/fail),
+        // `emit` já vira no-op daí em diante e o `br` abaixo não sai — LLVM
+        // aceita um terminador só por bloco.
+        if (c.isBlock) {
+            this.genStmts(c.body);
+            this.emit(`  store i64 0, ptr ${ra}`);   // bloco que cai fora: vale 0
+        } else {
+            const h: string = this.genExpr(c.handler);
+            this.emit(`  store i64 ${h}, ptr ${ra}`);
+        }
         this.emit(`  br label %${lok}`);
         this.term = true;
         this.label(lok);
@@ -2385,6 +2407,10 @@ class Codegen {
         // main e lambdas: globais promovidos ficam fora dos allocas (são gget/gset);
         // funções normais: tudo é local (param/local sombreia qualquer global homônimo).
         this.curLocals = without(locals, this.curCaptures);   // capturas vêm do env
+        // No main, um `const` de TOPO não pode virar alloca: ele é slot global
+        // (gget/gset), e uma alloca homônima o sombrearia — o main escreveria na
+        // pilha e as demais funções leriam o slot, sempre zerado.
+        if (this.curMain) { this.curLocals = without(this.curLocals, this.globalNames); }
         for (const lnm of this.curLocals) { this.emit(`  %${lnm}.addr = alloca i64`); }
         this.emitScSlots(f.body);
         for (const p of f.params) {
@@ -2482,7 +2508,7 @@ class Codegen {
         const funcName: string = concat("__tool_schema_", f.name);
 
         // Registrar a string literal
-        const strIdx: string = this.strLit(schemaStr);
+        const strIdx: string = this.genStrLit(schemaStr);
 
         // Gerar função que retorna a string
         this.raw(`define i64 @${funcName}() {`);
@@ -2504,7 +2530,7 @@ class Codegen {
             names = concat(names, `"${f.name}"`);
         }
         const listStr: string = concat(concat("[", names), "]");
-        const strIdx: string = this.strLit(listStr);
+        const strIdx: string = this.genStrLit(listStr);
 
         this.raw("define i64 @__tool_list() {");
         this.raw(`  ret i64 ${strIdx}`);
@@ -2556,10 +2582,24 @@ class Codegen {
             }
             if (fl.isAsync) { addUniq(this.asyncNames, fl.name); }   // chamada → spawn
         }
-        this.globalNames = [];   // sem promoção a global: a captura é por env agora
+        this.globalNames = [];   // a captura de lambda é por env, não por global
         // campos `static`: um SLOT GLOBAL por campo, na classe que o DECLARA.
         for (const c of prog.classes) {
             for (const sf of c.statics) { addUniq(this.globalNames, concat(c.name, concat(".", sf.name))); }
+        }
+        // `const`/`let` de TOPO também são slots globais. Sem isto eles viravam
+        // locais do main, e uma FUNÇÃO que os lesse não achava símbolo nenhum:
+        // o clang acusava "use of undefined value '%PORT.addr'", que não diz
+        // nada sobre o que houve. Só os de topo — um `const` dentro de um bloco
+        // continua local.
+        for (const s of prog.main) {
+            match (s) { LetStmt gl => addUniq(this.globalNames, gl.name), _ => 0 };
+        }
+        // A tabela de slots do runtime é fixa (LEX_NGLOBAL), e um índice fora
+        // dela é ignorado em SILÊNCIO — a leitura devolveria 0 e o programa
+        // rodaria com o valor errado. Melhor recusar.
+        if (this.globalNames.len() > 254) {
+            Terminal.log(`erro: ${this.globalNames.len()} globais (const/let de topo + campos static); o maximo e 254`);
         }
         // preâmbulo. As declarações do runtime saem da TABELA DE ABI (rtAbi): tipos
         // certos p/ ponteiro e void — é o que faz o mesmo .ll servir no nativo (ptr
@@ -2598,13 +2638,31 @@ class Codegen {
         for (const c of prog.classes) {
             for (const mm of c.methods) { this.genMethod(c.name, mm); }
         }
+        // Os DOIS podem coexistir: um `const` de módulo ao lado de um `fn main`
+        // explícito. Nesse caso os statements de topo são o INICIALIZADOR do
+        // módulo e rodam ANTES do corpo do main — é o que dá valor aos slots
+        // globais. Antes daqui o programa saía com dois `@main` na mesma IR.
+        let mainIdx: i64 = 0 - 1;
+        let mi: i64 = 0;
+        while (mi < prog.funcs.len()) {
+            if (strEq(prog.funcs[mi].name, "main")) { mainIdx = mi; }
+            mi = mi + 1;
+        }
+        if (mainIdx >= 0 && prog.main.len() > 0) {
+            let fundido: Stmt[] = [];
+            for (const s of prog.main) { fundido.push(s); }
+            for (const s of prog.funcs[mainIdx].body) { fundido.push(s); }
+            prog.funcs[mainIdx].body = fundido;
+            let vazio: Stmt[] = [];
+            prog.main = vazio;
+        }
         for (const f of prog.funcs) {
             this.genFunc(f);
             // Coletar funções marcadas como tool
             if (f.isTool) { this.toolFuncs.push(f); }
         }
-        // script-mode: statements de topo viram o `main` (i32). Convenção do lex:
-        // ou há `fn main` explícito (já em funcs), ou statements de topo — não os dois.
+        // script-mode: statements de topo viram o `main` (i32), quando não há
+        // um `fn main` explícito (o caso misto já foi fundido acima).
         if (prog.main.len() > 0) {
             let pp: Param[] = [];
             const mainFn: Func = new Func("main", pp, "i32", false, prog.main);

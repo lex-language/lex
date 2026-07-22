@@ -7,6 +7,7 @@
 //   lex fmt [--check] <arquivos.lex>      formata (in-place) ou confere
 //   lex test <arquivos.test.lex>...       roda as suítes via o harness
 //   lex check [--json] <arquivos.lex>...  diagnósticos (variável indefinida) em JSON
+//   lex server [--port N] [dir]           sobe o site de uma pasta com pages/
 //   lex lsp                               Language Server por stdio
 //   lex pkg <init|add|remove|list> ...    gerenciador de pacotes (manifesto)
 //   lex version                           versão
@@ -18,6 +19,7 @@ import { runTestFile } from "./tools/testrunner"
 import { runCheck } from "./tools/checker"
 import { runLsp } from "./tools/lspserver"
 import { runPkg } from "./tools/pkgcmd"
+import { scanPages, scanPublic, sortStrs, portFromToml, genServerSrc, pageRoute, compName } from "./tools/servercmd"
 
 fn hasSuffix(s: string, suf: string): bool {
     const sl: i64 = len(s);
@@ -208,11 +210,107 @@ fn cmdBuild(av: string[], start: i64): i64 {
     return 0;
 }
 
+// aspas simples p/ o shell: dentro delas nada é interpretado, e um apóstrofo
+// no meio fecha-escapa-reabre ('\''). Sem isto um argumento com espaço viraria
+// dois, e um com `;` ou `$` seria executado pelo shell do `system`.
+fn shellQuote(s: string): string {
+    let out: string = "'";
+    let i: i64 = 0;
+    while (i < len(s)) {
+        if (peek8(s, i) == 39) { out = concat(out, "'\\''"); }
+        else { out = concat(out, charAt(s, i)); }
+        i = i + 1;
+    }
+    return concat(out, "'");
+}
+
+// `lex run <arquivo> [args…]` — o que vem DEPOIS do arquivo é do programa, não
+// do lex. É assim que `lex run site/server.lex --port 8080` chega no `args()`
+// do servidor; antes o binário rodava sem argumento nenhum e a flag sumia.
 fn cmdRun(av: string[]): i64 {
-    if (av.len() < 3) { Terminal.log("uso: lex run <arquivo.lex>"); return 1; }
+    if (av.len() < 3) { Terminal.log("uso: lex run <arquivo.lex> [args...]"); return 1; }
     const bin: string = "/tmp/lexcli_run";
     if (buildFile(av[2], bin) != 0) { return 1; }
-    return system(bin) / 256;       // WEXITSTATUS
+    let cmd: string = bin;
+    let i: i64 = 3;
+    while (i < av.len()) {
+        cmd = concat(cmd, concat(" ", shellQuote(av[i])));
+        i = i + 1;
+    }
+    return system(cmd) / 256;       // WEXITSTATUS
+}
+
+// `lex server [--port N] [--dir D]` — sobe o site de uma pasta com `pages/`.
+//
+// Não há servidor a escrever: as rotas SÃO os .lsx de pages/. O comando gera um
+// .lex com o roteamento, compila e executa. O fonte gerado é temporário e sai
+// no fim, mas mora na raiz do projeto enquanto existe — os imports das páginas
+// são relativos a ele.
+fn cmdServer(av: string[]): i64 {
+    let root: string = ".";
+    let porta: i64 = 0 - 1;
+    let saidaBin: string = "";        // --build <arq>: compila e NÃO executa
+    let i: i64 = 2;
+    while (i < av.len()) {
+        if (strEq(av[i], "--port") && i + 1 < av.len()) { porta = parseInt(av[i + 1]); i = i + 2; }
+        else if (strEq(av[i], "--dir") && i + 1 < av.len()) { root = av[i + 1]; i = i + 2; }
+        else if (strEq(av[i], "--build") && i + 1 < av.len()) { saidaBin = av[i + 1]; i = i + 2; }
+        else { root = av[i]; i = i + 1; }
+    }
+
+    const pagesDir: string = concat(root, "/pages");
+    if (isDir(pagesDir) == 0) {
+        Terminal.log(`lex server: nao achei '${pagesDir}'.`);
+        Terminal.log("            as rotas sao os .lsx dentro de pages/ (pages/index.lsx = /).");
+        return 1;
+    }
+
+    let pages: string[] = [];
+    scanPages(pagesDir, "", pages);
+    if (pages.len() == 0) {
+        Terminal.log(`lex server: '${pagesDir}' nao tem nenhum .lsx`);
+        return 1;
+    }
+    pages = sortStrs(pages);
+
+    let estaticos: string[] = [];
+    const publicDir: string = concat(root, "/public");
+    if (isDir(publicDir) != 0) { scanPublic(publicDir, "", estaticos); }
+    estaticos = sortStrs(estaticos);
+
+    if (porta < 0) { porta = portFromToml(root, 3000); }
+
+    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  pages/${rel}`); }
+    for (const rel of estaticos) { Terminal.log(`  /${rel}  ←  public/${rel}`); }
+
+    // o fonte gerado é efêmero, mas visível: se o build falhar, o erro aponta
+    // para ele, e ver o roteamento gerado é a forma de entender o que houve.
+    const gen: string = concat(root, "/.lex-server.lex");
+    let bin: string = concat(root, "/.lex-server");
+    if (!strEq(saidaBin, "")) { bin = saidaBin; }
+    writeFile(gen, genServerSrc(pages, estaticos, porta));
+    const rc: i64 = buildFile(gen, bin);
+    if (rc != 0) {
+        Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
+        return 1;
+    }
+    remove(gen);
+    remove(concat(bin, ".ll"));
+
+    // `--build`: entrega o binário e sai. É o que permite a imagem Docker
+    // compilar no estágio de build e RODAR num estágio sem clang — sem isto o
+    // servidor recompilaria a cada start e a imagem carregaria um LLVM inteiro.
+    if (!strEq(saidaBin, "")) {
+        Terminal.log(`lex server: binario em ${bin}`);
+        Terminal.log("            rode-o com a pasta do site como diretorio atual (ele lê public/ por caminho relativo)");
+        return 0;
+    }
+
+    // com a raiz como cwd: o gerado lê os estáticos por caminho relativo
+    // (`public/…`), o que mantém a pasta do site movível.
+    const saida: i64 = system(`cd ${root} && ./.lex-server`) / 256;
+    remove(bin);
+    return saida;
 }
 
 fn cmdFmt(av: string[]): i64 {
@@ -288,6 +386,7 @@ else if (strEq(cmd, "run")) { rc = cmdRun(av); }
 else if (strEq(cmd, "fmt")) { rc = cmdFmt(av); }
 else if (strEq(cmd, "test")) { rc = cmdTest(av); }
 else if (strEq(cmd, "check")) { rc = cmdCheck(av); }
+else if (strEq(cmd, "server")) { rc = cmdServer(av); }
 else if (strEq(cmd, "lsp")) { rc = runLsp(); }
 else if (strEq(cmd, "pkg")) { rc = runPkg(av, 2); }
 else if (hasSuffix(cmd, ".lex") || hasSuffix(cmd, ".lsx")) { rc = cmdBuild(av, 1); }   // forma implícita: lex <arquivo>

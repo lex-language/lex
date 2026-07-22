@@ -1,0 +1,7 @@
+---
+// Fixture do <style is:global>: um componente não emite <body>, então um reset
+// global não pode ser escopado — `body[data-lsx-…]` não casaria com nada.
+---
+<p>oi</p>
+<style is:global>body { margin: 0 }</style>
+<style>p { color: red }</style>

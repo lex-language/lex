@@ -1,0 +1,6 @@
+[package]
+name = "lex-site"
+version = "0.1.0"
+
+[server]
+port = 3000

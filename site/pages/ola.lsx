@@ -1,0 +1,22 @@
+---
+// ola.lsx — a requisição é NATIVA do formato.
+//
+// Repare no que NÃO está escrito aqui: nenhum import, nenhum socket, nenhum
+// cabeçalho HTTP — e nenhum <html>, <head> ou <body>. Uma página é um
+// COMPONENTE; o envelope do documento é montado uma vez só (lexDocument, em
+// src/std/web.lex) e o que a página controla dele sai do contexto.
+//
+// `Lex` é a requisição corrente — o mesmo papel do `Astro` numa página .astro.
+const nome: string = Lex.params.get("nome");
+if (len(nome) == 0) { Lex.notFound(); }
+Lex.title = "Ola";
+Lex.lang = "pt-BR";
+---
+
+<h1>Ola, {nome}!</h1>
+<p class="meta">path={Lex.request.path} metodo={Lex.request.method} status={Lex.status}</p>
+
+<style>
+    h1 { font-family: system-ui, sans-serif; }
+    .meta { color: #71717a; font-family: ui-monospace, monospace; font-size: 0.9rem; }
+</style>
