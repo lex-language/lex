@@ -19,7 +19,7 @@
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
 
 // ── versão ────────────────────────────────────────────────────────────────────
-const LEX_VERSION: string = "0.1.4";
+const LEX_VERSION: string = "0.1.5";
 const LEX_REPO: string = "lex-language/lex";
 const LEX_RELEASES_URL: string = "https://github.com/lex-language/lex/releases";
 import { formatSource, formatLsx } from "./tools/fmt"
@@ -350,21 +350,35 @@ fn cmdServer(av: string[]): i64 {
         return saida;
     }
 
-    // Modo watch: hot reload
+    // Modo watch: recompila quando detecta mudanças, mas roda em foreground
+    // O usuário faz refresh no browser manualmente após ver "recompilado!"
     Terminal.log("");
-    Terminal.log("watching for changes... (Ctrl+C para sair)");
+    Terminal.log("modo watch: salve um arquivo e faca refresh no browser");
+    Terminal.log("            Ctrl+C para sair");
     Terminal.log("");
 
     let lastHash: string = hashDir(pagesDir);
     const bin: string = concat(root, "/.lex-server");
 
+    // Loop: roda servidor, quando detecta mudança recompila e reinicia
     while (true) {
-        // Roda o servidor em background
-        system(`cd ${root} && ./.lex-server &`);
+        // Roda o servidor (bloqueia até Ctrl+C ou erro)
+        // Usamos um script que monitora em paralelo
+        const pid: string = captureCmdOutput(`cd ${root} && ./.lex-server & echo $!`);
+        const serverPid: string = trimWhitespace(pid);
 
         // Poll por mudanças a cada 1s
         while (true) {
             system("sleep 1");
+
+            // Verifica se o servidor ainda está rodando
+            const check: i64 = system(`kill -0 ${serverPid} 2>/dev/null`);
+            if (check != 0) {
+                // Servidor morreu (Ctrl+C ou erro), sai do watch
+                remove(bin);
+                return 0;
+            }
+
             const curHash: string = hashDir(pagesDir);
             if (!strEq(curHash, lastHash)) {
                 lastHash = curHash;
@@ -372,7 +386,8 @@ fn cmdServer(av: string[]): i64 {
                 Terminal.log("mudanca detectada, recompilando...");
 
                 // Mata o servidor atual
-                system("pkill -f '.lex-server' 2>/dev/null");
+                system(`kill ${serverPid} 2>/dev/null`);
+                system("sleep 0.5");
 
                 // Re-escaneia páginas (pode ter novas)
                 pages = [];
@@ -383,7 +398,7 @@ fn cmdServer(av: string[]): i64 {
                 if (buildServer(root, pages, estaticos, porta) != 0) {
                     Terminal.log("erro na compilacao, aguardando proxima mudanca...");
                 } else {
-                    Terminal.log("recompilado!");
+                    Terminal.log("recompilado! faca refresh no browser");
                     for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  pages/${rel}`); }
                 }
                 break;  // sai do loop interno para reiniciar o servidor
