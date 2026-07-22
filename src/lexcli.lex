@@ -536,23 +536,35 @@ fn cmdUpdate(): i64 {
 
     const platform: string = detectPlatform();
     const binName: string = concat("lex-", platform);
-    // GitHub Releases: https://github.com/REPO/releases/download/TAG/ASSET
-    const url: string = `https://github.com/${LEX_REPO}/releases/download/${latest}/${binName}`;
+    // GitHub Releases: https://github.com/REPO/releases/download/TAG/ASSET.tar.gz
+    const url: string = `https://github.com/${LEX_REPO}/releases/download/${latest}/${binName}.tar.gz`;
 
     Terminal.log(`Baixando ${url}...`);
 
-    const tmpBin: string = "/tmp/lex_new";
-    const rc: i64 = system(`curl -fsSL -L ${url} -o ${tmpBin}`);
+    const tmpDir: string = "/tmp/lex_update";
+    const tmpTar: string = "/tmp/lex_update.tar.gz";
+    const tmpBin: string = "/tmp/lex_update/lex";
+
+    let rc: i64 = system(`curl -fsSL -L ${url} -o ${tmpTar}`);
     if (rc != 0) {
         Terminal.log("erro: falha ao baixar a nova versao");
         return 1;
     }
 
     // Verifica se o download foi bem sucedido (não é HTML de erro)
-    const content: string = readFile(tmpBin);
+    const content: string = readFile(tmpTar);
     if (len(content) < 1000 || findSubstring(content, "<!DOCTYPE") >= 0 || findSubstring(content, "Not Found") >= 0) {
         Terminal.log("erro: binario nao encontrado para esta plataforma");
         Terminal.log(`      verifique em ${LEX_RELEASES_URL}`);
+        return 1;
+    }
+
+    // Extrai o tar.gz
+    Terminal.log("Extraindo...");
+    system(`rm -rf ${tmpDir} && mkdir -p ${tmpDir}`);
+    rc = system(`tar -xzf ${tmpTar} -C ${tmpDir}`);
+    if (rc != 0) {
+        Terminal.log("erro: falha ao extrair o arquivo");
         return 1;
     }
 

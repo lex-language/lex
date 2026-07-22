@@ -54,32 +54,40 @@ fi
 echo "Versao: $VERSION"
 
 BIN_NAME="lex-$PLATFORM"
-URL="https://github.com/$REPO/releases/download/$VERSION/$BIN_NAME"
+URL="https://github.com/$REPO/releases/download/$VERSION/$BIN_NAME.tar.gz"
 
 echo "Baixando $URL..."
-TMP_FILE="$(mktemp)"
+TMP_DIR="$(mktemp -d)"
+TMP_FILE="$TMP_DIR/lex.tar.gz"
 curl -fsSL -L "$URL" -o "$TMP_FILE"
 
 # Verifica se o download foi bem sucedido
 if [ ! -s "$TMP_FILE" ] || head -c 100 "$TMP_FILE" | grep -q "Not Found"; then
     echo "erro: binario nao encontrado para $PLATFORM"
-    rm -f "$TMP_FILE"
+    rm -rf "$TMP_DIR"
     exit 1
 fi
 
-chmod +x "$TMP_FILE"
+# Extrai o tar.gz
+echo "Extraindo..."
+tar -xzf "$TMP_FILE" -C "$TMP_DIR"
+BIN_FILE="$TMP_DIR/lex"
+chmod +x "$BIN_FILE"
 
 # Tenta instalar em /usr/local/bin
 echo "Instalando em $INSTALL_DIR/lex..."
-if mv "$TMP_FILE" "$INSTALL_DIR/lex" 2>/dev/null; then
+if mv "$BIN_FILE" "$INSTALL_DIR/lex" 2>/dev/null; then
     echo ""
     echo "Lex $VERSION instalado com sucesso!"
 else
     echo "Permissao negada. Tentando com sudo..."
-    sudo mv "$TMP_FILE" "$INSTALL_DIR/lex"
+    sudo mv "$BIN_FILE" "$INSTALL_DIR/lex"
     echo ""
     echo "Lex $VERSION instalado com sucesso!"
 fi
+
+# Limpa arquivos temporarios
+rm -rf "$TMP_DIR"
 
 echo ""
 echo "Execute 'lex --help' para comecar."
