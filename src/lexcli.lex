@@ -679,7 +679,7 @@ fn cmdInit(av: string[]): i64 {
     if (exists(indexPath)) {
         Terminal.log(`aviso: '${indexPath}' ja existe, pulando`);
     } else {
-        const indexContent: string = "---\nexport fn GET(req: Request): Response {\n    return this.render({ title: \"Lex\" });\n}\n---\n<!DOCTYPE html>\n<html>\n<head>\n    <title>{{ title }}</title>\n</head>\n<body>\n    <h1>Bem-vindo ao Lex!</h1>\n</body>\n</html>\n";
+        const indexContent: string = "---\n// index.lsx - pagina inicial\nLex.title = \"Meu Projeto\";\nLex.lang = \"pt-BR\";\n---\n\n<h1>Bem-vindo ao Lex!</h1>\n<p>Edite este arquivo em <code>pages/index.lsx</code></p>\n\n<style>\n    h1 { font-family: system-ui, sans-serif; }\n    code { background: #f4f4f5; padding: 0.2em 0.4em; border-radius: 4px; }\n</style>\n";
         writeFile(indexPath, indexContent);
         Terminal.log(`criado: ${indexPath}`);
     }
