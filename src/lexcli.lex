@@ -386,10 +386,10 @@ fn detectPlatform(): string {
     const uname: string = captureCmdOutput("uname -s");
     const arch: string = captureCmdOutput("uname -m");
     let os: string = "linux";
-    if (indexOfSub(uname, "Darwin") >= 0) { os = "macos"; }
-    else if (indexOfSub(uname, "MINGW") >= 0 || indexOfSub(uname, "MSYS") >= 0) { os = "windows"; }
+    if (findSubstring(uname, "Darwin") >= 0) { os = "macos"; }
+    else if (findSubstring(uname, "MINGW") >= 0 || findSubstring(uname, "MSYS") >= 0) { os = "windows"; }
     let cpu: string = "x64";
-    if (indexOfSub(arch, "arm64") >= 0 || indexOfSub(arch, "aarch64") >= 0) { cpu = "arm64"; }
+    if (findSubstring(arch, "arm64") >= 0 || findSubstring(arch, "aarch64") >= 0) { cpu = "arm64"; }
     return concat(os, concat("-", cpu));
 }
 
@@ -400,7 +400,7 @@ fn captureCmdOutput(cmd: string): string {
 }
 
 // Busca um substring dentro de uma string.
-fn indexOfSub(hay: string, needle: string): i64 {
+fn findSubstring(hay: string, needle: string): i64 {
     const hn: i64 = len(hay);
     const nn: i64 = len(needle);
     let i: i64 = 0;
@@ -476,7 +476,7 @@ fn fetchLatestVersion(): string {
     // Extrai "tag_name" do JSON (simples, sem parser completo)
     const json: string = readFile("/tmp/lex_latest");
     const marker: string = "\"tag_name\":";
-    const idx: i64 = indexOfSub(json, marker);
+    const idx: i64 = findSubstring(json, marker);
     if (idx < 0) { return ""; }
     // Encontra o valor entre aspas após tag_name
     let start: i64 = idx + len(marker);
@@ -550,7 +550,7 @@ fn cmdUpdate(): i64 {
 
     // Verifica se o download foi bem sucedido (não é HTML de erro)
     const content: string = readFile(tmpBin);
-    if (len(content) < 1000 || indexOfSub(content, "<!DOCTYPE") >= 0 || indexOfSub(content, "Not Found") >= 0) {
+    if (len(content) < 1000 || findSubstring(content, "<!DOCTYPE") >= 0 || findSubstring(content, "Not Found") >= 0) {
         Terminal.log("erro: binario nao encontrado para esta plataforma");
         Terminal.log(`      verifique em ${LEX_RELEASES_URL}`);
         return 1;
