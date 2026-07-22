@@ -383,8 +383,8 @@ fn cmdCheck(av: string[]): i64 {
 // ── update ────────────────────────────────────────────────────────────────────
 // Detecta o SO e arquitetura para baixar o binário correto.
 fn detectPlatform(): string {
-    const uname: string = captureCmd("uname -s");
-    const arch: string = captureCmd("uname -m");
+    const uname: string = captureCmdOutput("uname -s");
+    const arch: string = captureCmdOutput("uname -m");
     let os: string = "linux";
     if (indexOfSub(uname, "Darwin") >= 0) { os = "macos"; }
     else if (indexOfSub(uname, "MINGW") >= 0 || indexOfSub(uname, "MSYS") >= 0) { os = "windows"; }
@@ -394,7 +394,7 @@ fn detectPlatform(): string {
 }
 
 // Captura a saída de um comando num arquivo temporário.
-fn captureCmd(cmd: string): string {
+fn captureCmdOutput(cmd: string): string {
     system(`${cmd} > /tmp/lex_cap 2>/dev/null`);
     return readFile("/tmp/lex_cap");
 }
@@ -509,10 +509,10 @@ fn showUpdateNotice(): void {
 fn findSelfPath(): string {
     // macOS/Linux: /proc/self/exe ou argv[0] resolvido
     if (exists("/proc/self/exe")) {
-        return trimWhitespace(captureCmd("readlink -f /proc/self/exe"));
+        return trimWhitespace(captureCmdOutput("readlink -f /proc/self/exe"));
     }
     // macOS não tem /proc, usa which
-    return trimWhitespace(captureCmd("which lex"));
+    return trimWhitespace(captureCmdOutput("which lex"));
 }
 
 // Comando update: baixa a nova versão e substitui o binário.
