@@ -31,7 +31,9 @@ COPY . .
 RUN ./src/scripts/build-seed.sh
 
 # as rotas são os .lsx de site/pages/; o servidor sai como binário nativo.
-RUN ./bin/lex server site/ --build /out/lex-site
+# O `mkdir` não é cerimônia: o build escreve o .ll ao lado do binário, e sem o
+# diretório o clang falha com "no such file or directory: '/out/lex-site.ll'".
+RUN mkdir -p /out && ./bin/lex server site/ --build /out/lex-site
 
 # ── estágio 2: só o que serve ────────────────────────────────────────────────
 FROM debian:bookworm-slim
