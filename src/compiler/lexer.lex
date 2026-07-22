@@ -18,6 +18,8 @@ enum Tok {
     Defer, Async, Await,
     // AI-specific keywords
     Tool, Agent, Crew, Workflow, Memory,
+    // Client-side (WASM)
+    Client,
     // identificadores e literais
     Ident, Int, Float, Str, Template,
     // pontuação
@@ -117,6 +119,8 @@ fn keywordKind(s: string): Tok {
     if (strEq(s, "crew")) { return Tok.Crew; }
     if (strEq(s, "workflow")) { return Tok.Workflow; }
     if (strEq(s, "memory")) { return Tok.Memory; }
+    // Client-side (WASM)
+    if (strEq(s, "client")) { return Tok.Client; }
     return Tok.Ident;
 }
 

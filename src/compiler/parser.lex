@@ -289,6 +289,7 @@ class Func {
     body: Stmt[]
     isAsync: bool       // `async function`: chamá-la lança uma thread (Future)
     isTool: bool        // `tool function`: função exportável como tool para LLMs
+    isClient: bool      // `client function`: função que roda no browser (compila p/ WASM)
     toolDesc: string    // descrição da tool (extraída do doc-comment)
     captures: string[]  // arrow: variáveis livres capturadas POR VALOR (env)
     ownerClass: string  // arrow escrita DENTRO de um método: a classe (tipo do `this`)
@@ -296,6 +297,7 @@ class Func {
         this.name = name; this.params = params; this.ret = ret
         this.fallible = fallible; this.body = body; this.isAsync = false
         this.isTool = false
+        this.isClient = false
         this.toolDesc = ""
         this.captures = []
         this.ownerClass = ""
@@ -326,11 +328,13 @@ class ClassDecl {
     typeParams: string[]    // <T, U> — p/ reificar o retorno (Pilha<string>.pop(): string)
     statics: ClassField[]   // campos `static` — vivem num SLOT GLOBAL, não no objeto
     staticInits: Expr[]     // inicializador de cada static (IntLit(0) se não houver)
+    isClient: bool          // `client class` — classe que roda no browser (transpilada p/ JS)
     constructor(name: string, parent: string, fields: ClassField[], methods: Func[]) {
         this.name = name; this.parent = parent; this.fields = fields; this.methods = methods
         this.typeParams = []
         this.statics = []
         this.staticInits = []
+        this.isClient = false
     }
 }
 // Programa = imports + enums + classes + funções + statements de topo
@@ -342,10 +346,12 @@ class Program {
     funcs: Func[]
     main: Stmt[]
     externs: Func[]     // `declare function f(...)` — símbolos de fora (libc, SO)
+    clientFuncs: Func[] // `client function` — funções que rodam no browser (WASM)
     constructor(imports: Import[], enums: EnumDecl[], classes: ClassDecl[], funcs: Func[], main: Stmt[]) {
         this.imports = imports; this.enums = enums
         this.classes = classes; this.funcs = funcs; this.main = main
         this.externs = []
+        this.clientFuncs = []
     }
 }
 
@@ -1033,6 +1039,9 @@ class Parser {
     parseFunc(): Func {
         let isAsync: bool = false;
         let isTool: bool = false;
+        let isClient: bool = false;
+        // `client function` — função que roda no browser (compila p/ WASM)
+        if (this.peekKind() == Tok.Client) { this.advance(); isClient = true; }
         // `tool function` — função exportável como tool para LLMs
         if (this.peekKind() == Tok.Tool) { this.advance(); isTool = true; }
         // `async function` — função assíncrona
@@ -1043,6 +1052,7 @@ class Parser {
         const f: Func = this.parseSig(name);
         f.isAsync = isAsync;
         f.isTool = isTool;
+        f.isClient = isClient;
         return f;
     }
 
@@ -1111,8 +1121,10 @@ class Parser {
         return new EnumDecl(name, variants);
     }
 
-    // `class Nome [extends Pai] [implements ...] { campos  métodos }`
+    // `[client] class Nome [extends Pai] [implements ...] { campos  métodos }`
     parseClass(): ClassDecl {
+        let isClient: bool = false;
+        if (this.peekKind() == Tok.Client) { this.advance(); isClient = true; }
         this.advance();                              // class
         const name: string = this.advance().text;
         const tps: string[] = this.parseTypeParams();   // <T> opcional (guardado)
@@ -1157,6 +1169,7 @@ class Parser {
         cd.typeParams = tps;
         cd.statics = statics;
         cd.staticInits = sinits;
+        cd.isClient = isClient;
         return cd;
     }
 
@@ -1227,7 +1240,7 @@ class Parser {
             if (k == Tok.Eof) { return; }
             if (k == Tok.LBrace) { this.skipBalanced(); return; }
             if (k == Tok.Semicolon) { this.advance(); return; }
-            if (k == Tok.Import || k == Tok.Enum || k == Tok.Class || k == Tok.Function || k == Tok.Tool) { return; }
+            if (k == Tok.Import || k == Tok.Enum || k == Tok.Class || k == Tok.Function || k == Tok.Tool || k == Tok.Client) { return; }
             this.advance();
         }
     }
@@ -1244,6 +1257,12 @@ class Parser {
             else if (k == Tok.Import) { imports.push(this.parseImport()); }
             else if (k == Tok.Enum) { enums.push(this.parseEnum()); }
             else if (k == Tok.Class) { classes.push(this.parseClass()); }
+            // `client class` ou `client function`
+            else if (k == Tok.Client) {
+                const next: Tok = this.peekToken(1).kind;
+                if (next == Tok.Class) { classes.push(this.parseClass()); }
+                else { funcs.push(this.parseFunc()); }
+            }
             // `tool function`, `async function`, `function` — todas são funções
             else if (k == Tok.Function || k == Tok.Async || k == Tok.Tool) { funcs.push(this.parseFunc()); }
             else if (k == Tok.Type || k == Tok.Interface || k == Tok.Declare) {
@@ -1446,6 +1465,7 @@ fn printFunc(f: Func): string {
     let bang: string = "";
     if (f.fallible) { bang = "!"; }
     let prefix: string = "fn";
+    if (f.isClient) { prefix = "client-fn"; }
     if (f.isTool) { prefix = "tool-fn"; }
     if (f.isAsync) { prefix = concat("async-", prefix); }
     return `(${prefix} ${f.name} (${ps}) ${f.ret}${bang} ${printBlock(f.body)})`;

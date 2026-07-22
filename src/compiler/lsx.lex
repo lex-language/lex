@@ -28,8 +28,8 @@
 // `--` + `-`), e markup em início de linha não passa por `markupPos`, que só
 // reconhece `<` logo após `return`/`=`/`(`/… Tratando o corpo inteiro como um
 // literal só, os dois problemas somem e o núcleo do compilador fica intocado.
-import { lexSrc } from "./lexer"
-import { Program, ClassDecl, ClassField, Func, Param, Stmt, Expr, ReturnStmt, AssignStmt, Field, Var, StrLit, BoolLit, Template, ElementExpr, Parser, Call, LetStmt, Import } from "./parser"
+import { lexSrc, Tok } from "./lexer"
+import { Program, ClassDecl, ClassField, Func, Param, Stmt, Expr, ReturnStmt, AssignStmt, Field, Var, StrLit, BoolLit, IntLit, FloatLit, Template, ElementExpr, Parser, Call, LetStmt, Import, Unary, Binary, MethodCall, ArrayLit, IfStmt, WhileStmt, BreakStmt, ContinueStmt, ExprStmt, NewExpr, Index, ForOfStmt, ForStmt } from "./parser"
 
 // nome do componente a partir do caminho: "a/b/Card.lsx" → "Card".
 fn componentName(path: string): string {
@@ -705,6 +705,222 @@ fn withLexCtx(body: Stmt[]): Stmt[] {
     return out;
 }
 
+// ── geração de JavaScript para funções client ───────────────────────────────
+// Transpila funções marcadas com `client` para JavaScript, permitindo que elas
+// rodem no browser. É uma tradução direta: `Terminal.log` → `console.log`, etc.
+
+fn jsBool(b: bool): string {
+    if (b) { return "true"; }
+    return "false";
+}
+
+fn jsCall(c: Call): string {
+    // Tradução de funções Lex para JS
+    // str(x) → String(x)
+    if (strEq(c.name, "str")) { return `String(${jsArgs(c.args)})`; }
+    // parseInt, parseFloat já são iguais no JS
+    return `${c.name}(${jsArgs(c.args)})`;
+}
+
+fn jsExpr(e: Expr): string {
+    return match (e) {
+        IntLit n => str(n.value),
+        FloatLit f => `${f.value}`,
+        BoolLit b => jsBool(b.value),
+        StrLit s => `"${s.value}"`,
+        Var v => v.name,
+        Unary u => `(${jsUnaryOp(u.op)}${jsExpr(u.operand)})`,
+        Binary bb => `(${jsExpr(bb.lhs)} ${jsBinaryOp(bb.op)} ${jsExpr(bb.rhs)})`,
+        Call c => jsCall(c),
+        MethodCall m => jsMethodCall(m),
+        Field fld => `${jsExpr(fld.base)}.${fld.field}`,
+        ArrayLit a => `[${jsArgs(a.items)}]`,
+        NewExpr ne => `new ${ne.cls}(${jsArgs(ne.args)})`,
+        Index ix => `${jsExpr(ix.base)}[${jsExpr(ix.index)}]`,
+        _ => "undefined"
+    };
+}
+
+fn jsUnaryOp(op: Tok): string {
+    if (op == Tok.Bang) { return "!"; }
+    if (op == Tok.Minus) { return "-"; }
+    if (op == Tok.Tilde) { return "~"; }
+    return "";
+}
+
+fn jsBinaryOp(op: Tok): string {
+    if (op == Tok.Plus) { return "+"; }
+    if (op == Tok.Minus) { return "-"; }
+    if (op == Tok.Star) { return "*"; }
+    if (op == Tok.Slash) { return "/"; }
+    if (op == Tok.Percent) { return "%"; }
+    if (op == Tok.EqEq) { return "==="; }
+    if (op == Tok.Neq) { return "!=="; }
+    if (op == Tok.Lt) { return "<"; }
+    if (op == Tok.Gt) { return ">"; }
+    if (op == Tok.Le) { return "<="; }
+    if (op == Tok.Ge) { return ">="; }
+    if (op == Tok.AmpAmp) { return "&&"; }
+    if (op == Tok.PipePipe) { return "||"; }
+    if (op == Tok.Amp) { return "&"; }
+    if (op == Tok.Pipe) { return "|"; }
+    if (op == Tok.Caret) { return "^"; }
+    if (op == Tok.Shl) { return "<<"; }
+    if (op == Tok.Shr) { return ">>"; }
+    return "";
+}
+
+fn jsArgs(xs: Expr[]): string {
+    let out: string = "";
+    let first: bool = true;
+    for (const x of xs) {
+        if (!first) { out = concat(out, ", "); }
+        out = concat(out, jsExpr(x));
+        first = false;
+    }
+    return out;
+}
+
+fn jsMethodCall(m: MethodCall): string {
+    // Tradução de métodos Lex para JS
+    const base: string = jsExpr(m.base);
+    // Terminal.log → console.log
+    if (strEq(base, "Terminal") && strEq(m.method, "log")) {
+        return `console.log(${jsArgs(m.args)})`;
+    }
+    // document.querySelector, etc.
+    return `${base}.${m.method}(${jsArgs(m.args)})`;
+}
+
+fn jsLetKw(mutable: bool): string {
+    if (mutable) { return "let"; }
+    return "const";
+}
+
+fn jsLet(l: LetStmt): string {
+    return `${jsLetKw(l.mutable)} ${l.name} = ${jsExpr(l.value)};`;
+}
+
+fn jsReturn(r: ReturnStmt): string {
+    if (r.hasValue) { return `return ${jsExpr(r.value)};`; }
+    return "return;";
+}
+
+fn jsForOf(fo: ForOfStmt): string {
+    const kw: string = jsLetKw(fo.mutable);
+    return `for (${kw} ${fo.name} of ${jsExpr(fo.iter)}) { ${jsBlock(fo.body)} }`;
+}
+
+fn jsFor(f: ForStmt): string {
+    let init: string = "";
+    if (f.hasInit) { init = jsStmt(f.init); }
+    let cond: string = "";
+    if (f.hasCond) { cond = jsExpr(f.cond); }
+    let upd: string = "";
+    if (f.hasUpdate) { upd = jsStmt(f.update); }
+    // Remove trailing semicolon from update
+    if (len(upd) > 0 && peek8(upd, len(upd) - 1) == 59) {
+        upd = substring(upd, 0, len(upd) - 1);
+    }
+    return `for (${init} ${cond}; ${upd}) { ${jsBlock(f.body)} }`;
+}
+
+fn jsStmt(s: Stmt): string {
+    return match (s) {
+        LetStmt l => jsLet(l),
+        AssignStmt a => `${jsExpr(a.target)} = ${jsExpr(a.value)};`,
+        ReturnStmt r => jsReturn(r),
+        IfStmt ii => jsIf(ii),
+        WhileStmt w => `while (${jsExpr(w.cond)}) { ${jsBlock(w.body)} }`,
+        ForOfStmt fo => jsForOf(fo),
+        ForStmt ff => jsFor(ff),
+        BreakStmt bb => "break;",
+        ContinueStmt cc => "continue;",
+        ExprStmt ee => `${jsExpr(ee.expr)};`,
+        _ => ""
+    };
+}
+
+fn jsIf(i: IfStmt): string {
+    let out: string = `if (${jsExpr(i.cond)}) { ${jsBlock(i.thenB)} }`;
+    if (i.elseB.len() > 0) {
+        out = concat(out, ` else { ${jsBlock(i.elseB)} }`);
+    }
+    return out;
+}
+
+fn jsBlock(stmts: Stmt[]): string {
+    let out: string = "";
+    for (const s of stmts) {
+        out = concat(out, concat(jsStmt(s), " "));
+    }
+    return out;
+}
+
+fn jsParams(ps: Param[]): string {
+    let out: string = "";
+    let first: bool = true;
+    for (const p of ps) {
+        if (!first) { out = concat(out, ", "); }
+        out = concat(out, p.name);
+        first = false;
+    }
+    return out;
+}
+
+fn jsFunc(f: Func): string {
+    return `function ${f.name}(${jsParams(f.params)}) { ${jsBlock(f.body)} }`;
+}
+
+// Gera um método JS (dentro de uma classe)
+fn jsMethod(f: Func): string {
+    if (strEq(f.name, "constructor")) {
+        return `constructor(${jsParams(f.params)}) { ${jsBlock(f.body)} }`;
+    }
+    return `${f.name}(${jsParams(f.params)}) { ${jsBlock(f.body)} }`;
+}
+
+// Gera uma classe JS a partir de ClassDecl
+fn jsClass(cd: ClassDecl): string {
+    let out: string = `class ${cd.name}`;
+    if (len(cd.parent) > 0) {
+        out = concat(out, ` extends ${cd.parent}`);
+    }
+    out = concat(out, " {\n");
+
+    // Campos (em JS, são declarados no constructor)
+    // Métodos
+    for (const m of cd.methods) {
+        out = concat(out, concat("  ", concat(jsMethod(m), "\n")));
+    }
+
+    out = concat(out, "}");
+    return out;
+}
+
+// Gera um bloco <script> com classes e funções client transpiladas para JS
+fn genClientScript(funcs: Func[]): string {
+    if (funcs.len() == 0) { return ""; }
+    let js: string = "";
+    for (const f of funcs) {
+        js = concat(js, concat(jsFunc(f), "\n"));
+    }
+    return concat("<script>\n", concat(js, "</script>\n"));
+}
+
+// Versão completa que inclui classes
+fn genClientScriptFull(classes: ClassDecl[], funcs: Func[]): string {
+    if (classes.len() == 0 && funcs.len() == 0) { return ""; }
+    let js: string = "";
+    for (const cd of classes) {
+        js = concat(js, concat(jsClass(cd), "\n"));
+    }
+    for (const f of funcs) {
+        js = concat(js, concat(jsFunc(f), "\n"));
+    }
+    return concat("<script>\n", concat(js, "</script>\n"));
+}
+
 // ── .lsx → Program ──────────────────────────────────────────────────────────
 fn parseLsx(path: string, src: string, host: Parser): Program {
     const comp: string = componentName(path);
@@ -755,6 +971,22 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
     while (len(body) > 0 && isSpaceByte(peek8(body, len(body) - 1))) {
         body = substring(body, 0, len(body) - 1);      // apara o \n final do arquivo
     }
+
+    // Coleta classes e funções client ANTES de parsear o corpo, para poder
+    // injetar o script gerado no final do corpo.
+    let clientClassesPreview: ClassDecl[] = [];
+    for (const cd of fmProg.classes) {
+        if (cd.isClient) { clientClassesPreview.push(cd); }
+    }
+    let clientFuncsPreview: Func[] = [];
+    for (const f of fmProg.funcs) {
+        if (f.isClient) { clientFuncsPreview.push(f); }
+    }
+    // Se houver classes ou funções client, anexa o script ao corpo
+    if (clientClassesPreview.len() > 0 || clientFuncsPreview.len() > 0) {
+        body = concat(body, concat("\n", genClientScriptFull(clientClassesPreview, clientFuncsPreview)));
+    }
+
     let attr: string = "";
     if (hasScopedStyle(body)) { attr = concat("data-lsx-", scopeHash(comp)); }
     const ctx: LsxCtx = new LsxCtx(host, attr);
@@ -762,9 +994,11 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
 
     // 4. a classe de props: renomeia `Props` → `<Nome>Props`, injeta `children`
     // se o corpo usou <slot/>, e só então sintetiza o constructor.
+    // Classes marcadas como `client` não são incluídas no servidor.
     let classes: ClassDecl[] = [];
     let hasProps: bool = false;
     for (const cd of fmProg.classes) {
+        if (cd.isClient) { continue; }   // pula classes client (vão para o JS)
         if (strEq(cd.name, "Props")) {
             cd.name = propsTy;
             if (ctx.usedSlot) { addChildrenField(cd); }
@@ -804,13 +1038,25 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
     // hydrate. O espaço de nomes do lex é plano, então dois arquivos com um
     // `fn get` dariam duas `@get` na IR e o clang recusaria por símbolo
     // duplicado — a mesma armadilha que `noteComponent` já cobre p/ o render.
+    //
+    // `client function` — função que roda no browser (compila p/ WASM). O nome
+    // é prefixado com o componente para evitar colisões, e a função é separada
+    // para ser compilada em um módulo WASM à parte.
     let funcs: Func[] = [];
+    let clientFuncs: Func[] = [];
     for (const f of fmProg.funcs) {
         if (strEq(f.name, "hydrate")) { f.name = concat(comp, "_hydrate"); }
         else if (strEq(f.name, "get")) { f.name = concat(comp, "_get"); }
         else if (strEq(f.name, "post")) { f.name = concat(comp, "_post"); }
-        if (usaLex) { f.body = withLexCtx(f.body); }
-        funcs.push(f);
+
+        if (f.isClient) {
+            // Funções client recebem prefixo do componente e vão para lista separada
+            f.name = concat(concat(comp, "_"), f.name);
+            clientFuncs.push(f);
+        } else {
+            if (usaLex) { f.body = withLexCtx(f.body); }
+            funcs.push(f);
+        }
     }
     funcs.push(render);
 
@@ -829,5 +1075,6 @@ fn parseLsx(path: string, src: string, host: Parser): Program {
 
     const out: Program = new Program(imports, fmProg.enums, classes, funcs, []);
     out.externs = fmProg.externs;
+    out.clientFuncs = clientFuncs;
     return out;
 }

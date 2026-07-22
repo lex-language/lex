@@ -202,6 +202,7 @@ class ModuleLoader {
     lambdaN: i64        // contador GLOBAL de arrows içadas (ver nota em load)
     comps: string[]     // componentes .lsx já vistos (nome)
     compPaths: string[] // …e de qual arquivo vieram, p/ a mensagem de colisão
+    clientFuncs: Func[] // `client function` — funções client-side (WASM)
     constructor() {
         this.visited = []
         this.externs = []
@@ -212,6 +213,7 @@ class ModuleLoader {
         this.lambdaN = 0
         this.comps = []
         this.compPaths = []
+        this.clientFuncs = []
     }
 
     // um componente .lsx exporta uma `fn <Nome>` e uma `class <Nome>Props` de
@@ -271,12 +273,14 @@ class ModuleLoader {
         for (const f of prog.funcs) { this.funcs.push(f); }
         for (const s of prog.main) { this.main.push(s); }   // só o entry tem main
         for (const e of prog.externs) { this.externs.push(e); }
+        for (const cf of prog.clientFuncs) { this.clientFuncs.push(cf); }
     }
 
     toProgram(): Program {
         let noImports: Import[] = [];
         const prog: Program = new Program(noImports, this.enums, this.classes, this.funcs, this.main);
         prog.externs = this.externs;
+        prog.clientFuncs = this.clientFuncs;
         return prog;
     }
 }
