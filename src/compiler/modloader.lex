@@ -71,7 +71,28 @@ fn findStd(rel: string): string {
 
 // acha o `src/runtime.c` subindo diretórios (p/ o link via clang funcionar de
 // qualquer subpasta). Devolve o 1º que existe, ou "src/runtime.c".
+// Todo build linka o `runtime.c`, então o compilador precisa achá-lo — e um
+// `lex` INSTALADO não tem o repositório por perto. Era o furo da distribuição:
+// `curl … | sh` entregava um binário que rodava `lex version` mas falhava em
+// `lex run` com "no such file or directory: 'src/runtime.c'".
+//
+// Ordem, da mais específica para a mais genérica:
+//   1. $LEX_RUNTIME       — o caminho exato, para quem quer mandar
+//   2. ./src/runtime.c    — subindo diretórios: é o repo, e dentro dele o
+//                           runtime do FONTE tem de ganhar do instalado
+//   3. $LEX_INSTALL_DIR   — onde o install.sh instalou (se foi customizado)
+//   4. $HOME/.lex         — o default do install.sh
+fn runtimeUnder(dir: string): string {
+    if (len(dir) == 0) { return ""; }
+    const cand: string = concat(dir, "/lib/runtime.c");
+    if (exists(cand)) { return cand; }
+    return "";
+}
+
 fn findRuntime(): string {
+    const explicito: string = getenv("LEX_RUNTIME");
+    if (len(explicito) > 0 && exists(explicito)) { return explicito; }
+
     let prefix: string = "";
     let i: i64 = 0;
     while (i < 8) {
@@ -80,6 +101,15 @@ fn findRuntime(): string {
         prefix = concat(prefix, "../");
         i = i + 1;
     }
+
+    const instalado: string = runtimeUnder(getenv("LEX_INSTALL_DIR"));
+    if (len(instalado) > 0) { return instalado; }
+    const home: string = getenv("HOME");
+    if (len(home) > 0) {
+        const padrao: string = runtimeUnder(concat(home, "/.lex"));
+        if (len(padrao) > 0) { return padrao; }
+    }
+
     return "src/runtime.c";
 }
 

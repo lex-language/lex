@@ -1706,6 +1706,14 @@ long long __lex_args(void) {
         __lex_arr_push(a, (long long)(intptr_t)lex_host_argv[i]);
     return (long long)(intptr_t)a;
 }
+// getenv(k): a variavel de ambiente, ou "" quando nao existe. Devolver ""
+// em vez de 0 e o que permite `len(getenv("X")) == 0` sem checar nulo antes.
+// E o que deixa o `lex` INSTALADO achar o runtime.c (ver findRuntime).
+char *__lex_getenv(const char *k) {
+    char *v = getenv(k);
+    return v ? v : (char *)"";
+}
+
 // system(cmd): i64 — roda um comando pelo shell (p/ invocar clang/linker).
 long long __lex_system(const char *cmd) { return (long long)system(cmd); }
 

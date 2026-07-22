@@ -2,7 +2,7 @@
 set -e
 
 # Lex installer
-# Usage: curl -fsSL https://lex-lang.org/install.sh | sh
+# Usage: curl -fsSL https://lex-lang.doxacode.com.br/install.sh | sh
 
 REPO="lex-language/lex"
 INSTALL_DIR="${LEX_INSTALL_DIR:-$HOME/.lex}"
@@ -43,22 +43,29 @@ TARGET="$OS-$ARCH"
 echo "  Detected: $TARGET"
 
 # Create directories
-mkdir -p "$BIN_DIR"
+mkdir -p "$INSTALL_DIR"
 
 # Download latest release
 RELEASE_URL="https://github.com/$REPO/releases/latest/download/lex-$TARGET.tar.gz"
 echo "  Downloading..."
 
 if command -v curl > /dev/null 2>&1; then
-    curl -fsSL "$RELEASE_URL" | tar -xz -C "$BIN_DIR"
+    curl -fsSL "$RELEASE_URL" | tar -xz -C "$INSTALL_DIR"
 elif command -v wget > /dev/null 2>&1; then
-    wget -qO- "$RELEASE_URL" | tar -xz -C "$BIN_DIR"
+    wget -qO- "$RELEASE_URL" | tar -xz -C "$INSTALL_DIR"
 else
     echo "  Error: curl or wget required"
     exit 1
 fi
 
 chmod +x "$BIN_DIR/lex"
+
+# Sanity: every build links the C runtime, so a lex without it can only report
+# its version. findRuntime() looks here (see src/compiler/modloader.lex).
+if [ ! -f "$INSTALL_DIR/lib/runtime.c" ]; then
+    echo "  Error: lib/runtime.c missing from the release tarball"
+    exit 1
+fi
 
 # Verify installation
 if [ -x "$BIN_DIR/lex" ]; then
@@ -67,6 +74,7 @@ if [ -x "$BIN_DIR/lex" ]; then
     echo "  Lex $VERSION installed successfully!"
     echo ""
     echo "  Location: $BIN_DIR/lex"
+    echo "  Runtime:  $INSTALL_DIR/lib/runtime.c"
     echo ""
 
     # Check if already in PATH

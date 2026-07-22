@@ -67,15 +67,17 @@ jobs:
 
       - name: empacota
         run: |
-          mkdir -p dist
-          # o tar tem de conter o binário chamado `lex` na RAIZ: o install.sh
-          # extrai direto em $BIN_DIR e depois faz chmod +x "$BIN_DIR/lex".
+          mkdir -p dist/bin dist/lib
           if [ -n "${{ matrix.cross }}" ]; then
-            ./bin/lex build src/lexcli.lex --target ${{ matrix.cross }} -o dist/lex
+            ./bin/lex build src/lexcli.lex --target ${{ matrix.cross }} -o dist/bin/lex
           else
-            cp bin/lex dist/lex
+            cp bin/lex dist/bin/lex
           fi
-          tar -czf lex-${{ matrix.alvo }}.tar.gz -C dist lex
+          # O runtime.c VAI JUNTO: todo build do lex linka esse arquivo, e sem
+          # ele o binario instalado so consegue responder `lex version` — era o
+          # furo da distribuicao. findRuntime() procura em <install>/lib.
+          cp src/runtime.c dist/lib/runtime.c
+          tar -czf lex-${{ matrix.alvo }}.tar.gz -C dist bin lib
           shasum -a 256 lex-${{ matrix.alvo }}.tar.gz > lex-${{ matrix.alvo }}.tar.gz.sha256
 
       - uses: actions/upload-artifact@v4

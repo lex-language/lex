@@ -107,6 +107,7 @@ fn runtimeFn(name: string): string {
     if (strEq(name, "charCode")) { return "__lex_char_code"; }
     if (strEq(name, "repeat")) { return "__lex_str_repeat"; }
     if (strEq(name, "readFile")) { return "__lex_fs_read"; }
+    if (strEq(name, "getenv")) { return "__lex_getenv"; }
     if (strEq(name, "writeFile")) { return "__lex_fs_write"; }
     if (strEq(name, "system")) { return "__lex_system"; }
     if (strEq(name, "args")) { return "__lex_args"; }
@@ -245,6 +246,7 @@ fn rtAbi(sym: string): string {
     if (strEq(sym, "__lex_json_stringify")) { return "p|p"; }
     // host / io
     if (strEq(sym, "__lex_fs_read")) { return "p|p"; }
+    if (strEq(sym, "__lex_getenv")) { return "p|p"; }
     if (strEq(sym, "__lex_fs_write")) { return "pp|."; }
     if (strEq(sym, "__lex_fs_exists")) { return "p|."; }
     if (strEq(sym, "__lex_fs_append") || strEq(sym, "__lex_fs_rename")) { return "pp|."; }
@@ -302,7 +304,7 @@ fn rtSymbols(): string[] {
         "__lex_fs_append", "__lex_fs_is_file", "__lex_fs_is_dir", "__lex_fs_size",
         "__lex_fs_remove", "__lex_fs_rename", "__lex_fs_mkdir", "__lex_fs_rmdir",
         "__lex_fs_list", "__lex_fs_open",
-        "__lex_system", "__lex_args",
+        "__lex_system", "__lex_args", "__lex_getenv",
         "__lex_gget", "__lex_gset", "__lex_set_err", "__lex_has_err", "__lex_take_err",
         "__lex_f_abs", "__lex_f_sqrt", "__lex_f_pow", "__lex_f_floor", "__lex_f_ceil",
         "__lex_f_round", "__lex_f_sin", "__lex_f_cos", "__lex_f_tan", "__lex_f_exp",

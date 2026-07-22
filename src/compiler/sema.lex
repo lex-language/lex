@@ -469,6 +469,7 @@ fn builtinFnRet(name: string): string {
         || strEq(name, "poke64") || strEq(name, "free")) { return "void"; }
     if (strEq(name, "alloc")) { return "ptr"; }
     if (strEq(name, "readFile")) { return "string"; }
+    if (strEq(name, "getenv")) { return "string"; }
     if (strEq(name, "writeFile")) { return "i64"; }
     if (strEq(name, "system")) { return "i64"; }
     if (strEq(name, "args")) { return "string[]"; }

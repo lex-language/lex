@@ -330,8 +330,8 @@ Lex.title = "Lex — The AI-Native Programming Language";
             <div class="install-box">
                 <label>Install with a single command:</label>
                 <div class="install-cmd">
-                    <code>curl -fsSL https://lex-lang.org/install.sh | sh</code>
-                    <button onclick="navigator.clipboard.writeText('curl -fsSL https://lex-lang.org/install.sh | sh')">
+                    <code>curl -fsSL https://lex-lang.doxacode.com.br/install.sh | sh</code>
+                    <button onclick="navigator.clipboard.writeText('curl -fsSL https://lex-lang.doxacode.com.br/install.sh | sh')">
                         Copy
                     </button>
                 </div>
