@@ -19,7 +19,7 @@
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
 
 // ── versão ────────────────────────────────────────────────────────────────────
-const LEX_VERSION: string = "0.1.10";
+const LEX_VERSION: string = "0.1.11";
 const LEX_REPO: string = "lex-language/lex";
 const LEX_RELEASES_URL: string = "https://github.com/lex-language/lex/releases";
 import { formatSource, formatLsx } from "./tools/fmt"
@@ -276,7 +276,7 @@ fn buildServer(root: string, pages: string[], estaticos: string[], porta: i64, p
     writeFile(gen, genServerSrc(pages, estaticos, porta, pagesPath));
     const rc: i64 = buildFile(gen, bin);
     if (rc != 0) {
-        Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
+        Terminal.log(concat("lex server: o build falhou; o fonte gerado ficou em ", gen));
         return 1;
     }
     remove(gen);
@@ -306,7 +306,7 @@ fn cmdServer(av: string[]): i64 {
         pagesDir = concat(root, "/pages");
     }
     if (isDir(pagesDir) == 0) {
-        Terminal.log(`lex server: nao achei 'src/pages/' nem 'pages/'.`);
+        Terminal.log("lex server: nao achei 'src/pages/' nem 'pages/'.");
         Terminal.log("            as rotas sao os .lsx dentro de src/pages/ (src/pages/index.lsx = /).");
         return 1;
     }
@@ -314,7 +314,7 @@ fn cmdServer(av: string[]): i64 {
     let pages: string[] = [];
     scanPages(pagesDir, "", pages);
     if (pages.len() == 0) {
-        Terminal.log(`lex server: '${pagesDir}' nao tem nenhum .lsx`);
+        Terminal.log(concat(concat("lex server: '", pagesDir), "' nao tem nenhum .lsx"));
         return 1;
     }
     pages = sortStrs(pages);
@@ -327,8 +327,8 @@ fn cmdServer(av: string[]): i64 {
 
     if (porta < 0) { porta = portFromToml(root, 3000); }
 
-    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  ${pagesDir}/${rel}`); }
-    for (const rel of estaticos) { Terminal.log(`  /${rel}  ←  ${publicDir}/${rel}`); }
+    for (const rel of pages) { Terminal.log(concat(concat(concat("  ", pageRoute(rel)), concat("  <-  ", pagesDir)), concat("/", rel))); }
+    for (const rel of estaticos) { Terminal.log(concat(concat("  /", rel), concat("  <-  ", concat(publicDir, concat("/", rel))))); }
 
     // `--build`: compila e sai (para Docker)
     if (!strEq(saidaBin, "")) {
@@ -336,13 +336,13 @@ fn cmdServer(av: string[]): i64 {
         writeFile(gen, genServerSrc(pages, estaticos, porta, pagesRelPath));
         const rc: i64 = buildFile(gen, saidaBin);
         if (rc != 0) {
-            Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
+            Terminal.log(concat("lex server: o build falhou; o fonte gerado ficou em ", gen));
             return 1;
         }
         remove(gen);
         remove(concat(saidaBin, ".ll"));
-        Terminal.log(`lex server: binario em ${saidaBin}`);
-        Terminal.log("            rode-o com a pasta do site como diretorio atual (ele lê public/ por caminho relativo)");
+        Terminal.log(concat("lex server: binario em ", saidaBin));
+        Terminal.log("            rode-o com a pasta do site como diretorio atual (ele le public/ por caminho relativo)");
         return 0;
     }
 
@@ -352,7 +352,7 @@ fn cmdServer(av: string[]): i64 {
     // Modo normal: roda uma vez e sai
     if (!watch) {
         const bin: string = concat(root, "/.lex-server");
-        const saida: i64 = system(`cd ${root} && ./.lex-server`) / 256;
+        const saida: i64 = system(concat(concat("cd ", root), " && ./.lex-server")) / 256;
         remove(bin);
         return saida;
     }
@@ -371,7 +371,7 @@ fn cmdServer(av: string[]): i64 {
     while (true) {
         // Roda o servidor (bloqueia até Ctrl+C ou erro)
         // Usamos um script que monitora em paralelo
-        const pid: string = captureCmdOutput(`cd ${root} && ./.lex-server & echo $!`);
+        const pid: string = captureCmdOutput(concat(concat("cd ", root), " && ./.lex-server & echo $!"));
         const serverPid: string = trimWhitespace(pid);
 
         // Poll por mudanças a cada 1s
@@ -379,7 +379,7 @@ fn cmdServer(av: string[]): i64 {
             system("sleep 1");
 
             // Verifica se o servidor ainda está rodando
-            const check: i64 = system(`kill -0 ${serverPid} 2>/dev/null`);
+            const check: i64 = system(concat(concat("kill -0 ", serverPid), " 2>/dev/null"));
             if (check != 0) {
                 // Servidor morreu (Ctrl+C ou erro), sai do watch
                 remove(bin);
@@ -393,7 +393,7 @@ fn cmdServer(av: string[]): i64 {
                 Terminal.log("mudanca detectada, recompilando...");
 
                 // Mata o servidor atual
-                system(`kill ${serverPid} 2>/dev/null`);
+                system(concat(concat("kill ", serverPid), " 2>/dev/null"));
                 system("sleep 0.5");
 
                 // Re-escaneia páginas (pode ter novas)
@@ -406,7 +406,7 @@ fn cmdServer(av: string[]): i64 {
                     Terminal.log("erro na compilacao, aguardando proxima mudanca...");
                 } else {
                     Terminal.log("recompilado! faca refresh no browser");
-                    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  ${pagesRelPath}/${rel}`); }
+                    for (const rel of pages) { Terminal.log(concat(concat(concat("  ", pageRoute(rel)), concat("  <-  ", pagesRelPath)), concat("/", rel))); }
                 }
                 break;  // sai do loop interno para reiniciar o servidor
             }
