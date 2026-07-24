@@ -180,25 +180,25 @@ fn genServerSrc(pages: string[], estaticos: string[], porta: i64, pagesPath: str
 
     for (const rel of pages) {
         const c: string = compName(rel);
-        s = concat(s, `import { ${c}, ${c}Props } from "./${pagesPath}/${rel}"\n`);
+        s = concat(s, concat(concat(concat(concat(concat("import { ", c), ", "), c), concat(concat("Props } from \"./", pagesPath), concat(concat("/", rel), "\"\n"))));
     }
 
     // a porta descoberta aqui é o DEFAULT; `--port` ainda vence em runtime.
     // Num container é o que permite trocar a porta sem rebuildar a imagem.
-    s = concat(s, `\nconst PORT: i64 = argPort(${porta});\n\n`);
+    s = concat(s, concat(concat("\nconst PORT: i64 = argPort(", str(porta)), ");\n\n"));
     s = concat(s, "fn rotas(Lex: LexCtx): string {\n");
     s = concat(s, "    const p: string = Lex.request.path;\n");
 
     for (const rel of pages) {
         const c: string = compName(rel);
         const rota: string = pageRoute(rel);
-        s = concat(s, `    if (strEq(p, "${rota}")) { return ${c}(new ${c}Props()); }\n`);
+        s = concat(s, concat(concat(concat(concat(concat("    if (strEq(p, \"", rota), "\")) { return "), c), concat("(new ", concat(c, "Props()); }\n"))));
     }
 
     for (const rel of estaticos) {
-        s = concat(s, `    if (strEq(p, "/${rel}")) {\n`);
-        s = concat(s, `        Lex.contentType = "${ctypeOf(rel)}";\n`);
-        s = concat(s, `        return readFile("public/${rel}");\n`);
+        s = concat(s, concat(concat("    if (strEq(p, \"/", rel), "\")) {\n"));
+        s = concat(s, concat(concat("        Lex.contentType = \"", ctypeOf(rel)), "\";\n"));
+        s = concat(s, concat(concat("        return readFile(\"public/", rel), "\");\n"));
         s = concat(s, "    }\n");
     }
 
@@ -210,7 +210,7 @@ fn genServerSrc(pages: string[], estaticos: string[], porta: i64, pagesPath: str
     s = concat(s, "fn main(): i32 {\n");
     s = concat(s, "    const app: Server = new Server(PORT);\n");
     s = concat(s, "    app.startPages(rotas) catch {\n");
-    s = concat(s, "        Terminal.log(`lex server: a porta ${PORT} ja esta em uso`);\n");
+    s = concat(s, "        Terminal.log(\"lex server: a porta ja esta em uso\");\n");
     s = concat(s, "        return 1;\n");
     s = concat(s, "    };\n");
     s = concat(s, "    return 0;\n");
