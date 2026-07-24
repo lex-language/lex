@@ -26,4 +26,10 @@
 # binário do compilador (gerado por ./scripts/build-seed.sh)
 bin/
 
+# builds locais de release
+dist/
+
+# instruções do Claude Code
+CLAUDE.md
+
 .DS_Store
