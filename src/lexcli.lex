@@ -19,7 +19,7 @@
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
 
 // ── versão ────────────────────────────────────────────────────────────────────
-const LEX_VERSION: string = "0.1.9";
+const LEX_VERSION: string = "0.1.10";
 const LEX_REPO: string = "lex-language/lex";
 const LEX_RELEASES_URL: string = "https://github.com/lex-language/lex/releases";
 import { formatSource, formatLsx } from "./tools/fmt"
@@ -627,20 +627,20 @@ fn cmdUpdate(): i64 {
         return 0;
     }
 
-    Terminal.log(`Nova versao disponivel: ${latest}`);
+    Terminal.log(concat("Nova versao disponivel: ", latest));
 
     const platform: string = detectPlatform();
     const binName: string = concat("lex-", platform);
     // GitHub Releases: https://github.com/REPO/releases/download/TAG/ASSET.tar.gz
-    const url: string = `https://github.com/${LEX_REPO}/releases/download/${latest}/${binName}.tar.gz`;
+    const url: string = concat(concat(concat(concat(concat("https://github.com/", LEX_REPO), "/releases/download/"), latest), "/"), concat(binName, ".tar.gz"));
 
-    Terminal.log(`Baixando ${url}...`);
+    Terminal.log(concat("Baixando ", concat(url, "...")));
 
     const tmpDir: string = "/tmp/lex_update";
     const tmpTar: string = "/tmp/lex_update.tar.gz";
     const tmpBin: string = "/tmp/lex_update/lex";
 
-    let rc: i64 = system(`curl -fsSL -L ${url} -o ${tmpTar}`);
+    let rc: i64 = system(concat(concat("curl -fsSL -L ", url), " -o /tmp/lex_update.tar.gz"));
     if (rc != 0) {
         Terminal.log("erro: falha ao baixar a nova versao");
         return 1;
@@ -650,45 +650,45 @@ fn cmdUpdate(): i64 {
     const content: string = readFile(tmpTar);
     if (len(content) < 1000 || findSubstring(content, "<!DOCTYPE") >= 0 || findSubstring(content, "Not Found") >= 0) {
         Terminal.log("erro: binario nao encontrado para esta plataforma");
-        Terminal.log(`      verifique em ${LEX_RELEASES_URL}`);
+        Terminal.log(concat("      verifique em ", LEX_RELEASES_URL));
         return 1;
     }
 
     // Extrai o tar.gz
     Terminal.log("Extraindo...");
-    system(`rm -rf ${tmpDir} && mkdir -p ${tmpDir}`);
-    rc = system(`tar -xzf ${tmpTar} -C ${tmpDir}`);
+    system("rm -rf /tmp/lex_update && mkdir -p /tmp/lex_update");
+    rc = system("tar -xzf /tmp/lex_update.tar.gz -C /tmp/lex_update");
     if (rc != 0) {
         Terminal.log("erro: falha ao extrair o arquivo");
         return 1;
     }
 
     // Torna executável
-    system(`chmod +x ${tmpBin}`);
+    system("chmod +x /tmp/lex_update/lex");
 
     // Encontra onde está o binário atual
     const selfPath: string = findSelfPath();
     if (strEq(selfPath, "")) {
         Terminal.log("erro: nao consegui localizar o binario atual");
-        Terminal.log(`      mova manualmente ${tmpBin} para o seu PATH`);
+        Terminal.log("      mova manualmente /tmp/lex_update/lex para o seu PATH");
         return 1;
     }
 
-    Terminal.log(`Atualizando ${selfPath}...`);
+    Terminal.log(concat("Atualizando ", concat(selfPath, "...")));
 
     // Tenta substituir (pode precisar de sudo)
-    let mvRc: i64 = system(`mv ${tmpBin} ${selfPath} 2>/dev/null`);
+    let mvRc: i64 = system(concat(concat("mv /tmp/lex_update/lex ", selfPath), " 2>/dev/null"));
     if (mvRc != 0) {
         Terminal.log("Permissao negada. Tentando com sudo...");
-        mvRc = system(`sudo mv ${tmpBin} ${selfPath}`);
+        mvRc = system(concat("sudo mv /tmp/lex_update/lex ", selfPath));
         if (mvRc != 0) {
             Terminal.log("erro: falha ao substituir o binario");
-            Terminal.log(`      mova manualmente ${tmpBin} para ${selfPath}`);
+            Terminal.log(concat("      mova manualmente /tmp/lex_update/lex para ", selfPath));
             return 1;
         }
     }
 
-    Terminal.log(`Atualizado para ${latest}!`);
+    Terminal.log(concat("Atualizado para ", concat(latest, "!")));
     return 0;
 }
 
