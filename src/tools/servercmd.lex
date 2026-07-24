@@ -173,14 +173,14 @@ fn portFromToml(root: string, fallback: i64): i64 {
 // Gera um .lex normal. Ele é escrito NA RAIZ do projeto porque os imports das
 // páginas são relativos ao arquivo que importa (`./pages/x.lsx`) — de /tmp os
 // caminhos não resolveriam.
-fn genServerSrc(pages: string[], estaticos: string[], porta: i64): string {
+fn genServerSrc(pages: string[], estaticos: string[], porta: i64, pagesPath: string): string {
     let s: string = "// GERADO por `lex server` — não edite; este arquivo é temporário.\n";
     s = concat(s, "import { Server } from \"http\"\n");
     s = concat(s, "import { LexCtx, argPort } from \"web\"\n");
 
     for (const rel of pages) {
         const c: string = compName(rel);
-        s = concat(s, `import { ${c}, ${c}Props } from "./pages/${rel}"\n`);
+        s = concat(s, `import { ${c}, ${c}Props } from "./${pagesPath}/${rel}"\n`);
     }
 
     // a porta descoberta aqui é o DEFAULT; `--port` ainda vence em runtime.

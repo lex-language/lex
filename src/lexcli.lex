@@ -270,10 +270,10 @@ fn hashDir(dir: string): string {
 }
 
 // Compila o servidor e retorna 0 se ok.
-fn buildServer(root: string, pages: string[], estaticos: string[], porta: i64): i64 {
+fn buildServer(root: string, pages: string[], estaticos: string[], porta: i64, pagesPath: string): i64 {
     const gen: string = concat(root, "/.lex-server.lex");
     const bin: string = concat(root, "/.lex-server");
-    writeFile(gen, genServerSrc(pages, estaticos, porta));
+    writeFile(gen, genServerSrc(pages, estaticos, porta, pagesPath));
     const rc: i64 = buildFile(gen, bin);
     if (rc != 0) {
         Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
@@ -299,8 +299,10 @@ fn cmdServer(av: string[]): i64 {
     }
 
     // procura pages/ em src/pages ou pages/ (compatibilidade)
+    let pagesRelPath: string = "src/pages";
     let pagesDir: string = concat(root, "/src/pages");
     if (isDir(pagesDir) == 0) {
+        pagesRelPath = "pages";
         pagesDir = concat(root, "/pages");
     }
     if (isDir(pagesDir) == 0) {
@@ -318,11 +320,8 @@ fn cmdServer(av: string[]): i64 {
     pages = sortStrs(pages);
 
     let estaticos: string[] = [];
-    // procura public/ em src/public ou public/ (compatibilidade)
-    let publicDir: string = concat(root, "/src/public");
-    if (isDir(publicDir) == 0) {
-        publicDir = concat(root, "/public");
-    }
+    // public/ fica na raiz do projeto
+    const publicDir: string = concat(root, "/public");
     if (isDir(publicDir) != 0) { scanPublic(publicDir, "", estaticos); }
     estaticos = sortStrs(estaticos);
 
@@ -334,7 +333,7 @@ fn cmdServer(av: string[]): i64 {
     // `--build`: compila e sai (para Docker)
     if (!strEq(saidaBin, "")) {
         const gen: string = concat(root, "/.lex-server.lex");
-        writeFile(gen, genServerSrc(pages, estaticos, porta));
+        writeFile(gen, genServerSrc(pages, estaticos, porta, pagesRelPath));
         const rc: i64 = buildFile(gen, saidaBin);
         if (rc != 0) {
             Terminal.log(`lex server: o build falhou; o fonte gerado ficou em ${gen}`);
@@ -348,7 +347,7 @@ fn cmdServer(av: string[]): i64 {
     }
 
     // Compila o servidor
-    if (buildServer(root, pages, estaticos, porta) != 0) { return 1; }
+    if (buildServer(root, pages, estaticos, porta, pagesRelPath) != 0) { return 1; }
 
     // Modo normal: roda uma vez e sai
     if (!watch) {
@@ -403,11 +402,11 @@ fn cmdServer(av: string[]): i64 {
                 pages = sortStrs(pages);
 
                 // Recompila
-                if (buildServer(root, pages, estaticos, porta) != 0) {
+                if (buildServer(root, pages, estaticos, porta, pagesRelPath) != 0) {
                     Terminal.log("erro na compilacao, aguardando proxima mudanca...");
                 } else {
                     Terminal.log("recompilado! faca refresh no browser");
-                    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  pages/${rel}`); }
+                    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  ${pagesRelPath}/${rel}`); }
                 }
                 break;  // sai do loop interno para reiniciar o servidor
             }
@@ -566,8 +565,8 @@ fn trimWhitespace(s: string): string {
 
 // Busca a última versão disponível no GitHub Releases.
 fn fetchLatestVersion(): string {
-    const url: string = `https://api.github.com/repos/${LEX_REPO}/releases/latest`;
-    const rc: i64 = system(`curl -fsSL ${url} -o /tmp/lex_latest 2>/dev/null`);
+    const url: string = concat(concat("https://api.github.com/repos/", LEX_REPO), "/releases/latest");
+    const rc: i64 = system(concat(concat("curl -fsSL ", url), " -o /tmp/lex_latest 2>/dev/null"));
     if (rc != 0) { return ""; }
     // Extrai "tag_name" do JSON (simples, sem parser completo)
     const json: string = readFile("/tmp/lex_latest");
@@ -613,18 +612,18 @@ fn findSelfPath(): string {
 
 // Comando update: baixa a nova versão e substitui o binário.
 fn cmdUpdate(): i64 {
-    Terminal.log(`lex ${LEX_VERSION}`);
+    Terminal.log(concat("lex ", LEX_VERSION));
     Terminal.log("Verificando atualizacoes...");
 
     const latest: string = fetchLatestVersion();
     if (strEq(latest, "")) {
         Terminal.log("erro: nao foi possivel verificar atualizacoes");
-        Terminal.log(`      verifique sua conexao ou acesse ${LEX_RELEASES_URL}`);
+        Terminal.log(concat("      verifique sua conexao ou acesse ", LEX_RELEASES_URL));
         return 1;
     }
 
     if (compareVersions(LEX_VERSION, latest) >= 0) {
-        Terminal.log(`Voce ja esta na versao mais recente (${LEX_VERSION})`);
+        Terminal.log(concat(concat("Voce ja esta na versao mais recente (", LEX_VERSION), ")"));
         return 0;
     }
 
@@ -780,8 +779,8 @@ fn cmdInit(av: string[]): i64 {
         Terminal.log(`criado: ${indexPath}`);
     }
 
-    // src/public/
-    const publicDir: string = concat(srcDir, "/public");
+    // public/ (na raiz do projeto)
+    const publicDir: string = concat(dir, "/public");
     if (isDir(publicDir) == 0) {
         system(`mkdir -p ${shellQuote(publicDir)}`);
         Terminal.log(`criado: ${publicDir}/`);
