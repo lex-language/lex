@@ -298,10 +298,14 @@ fn cmdServer(av: string[]): i64 {
         else { root = av[i]; i = i + 1; }
     }
 
-    const pagesDir: string = concat(root, "/pages");
+    // procura pages/ em src/pages ou pages/ (compatibilidade)
+    let pagesDir: string = concat(root, "/src/pages");
     if (isDir(pagesDir) == 0) {
-        Terminal.log(`lex server: nao achei '${pagesDir}'.`);
-        Terminal.log("            as rotas sao os .lsx dentro de pages/ (pages/index.lsx = /).");
+        pagesDir = concat(root, "/pages");
+    }
+    if (isDir(pagesDir) == 0) {
+        Terminal.log(`lex server: nao achei 'src/pages/' nem 'pages/'.`);
+        Terminal.log("            as rotas sao os .lsx dentro de src/pages/ (src/pages/index.lsx = /).");
         return 1;
     }
 
@@ -314,14 +318,18 @@ fn cmdServer(av: string[]): i64 {
     pages = sortStrs(pages);
 
     let estaticos: string[] = [];
-    const publicDir: string = concat(root, "/public");
+    // procura public/ em src/public ou public/ (compatibilidade)
+    let publicDir: string = concat(root, "/src/public");
+    if (isDir(publicDir) == 0) {
+        publicDir = concat(root, "/public");
+    }
     if (isDir(publicDir) != 0) { scanPublic(publicDir, "", estaticos); }
     estaticos = sortStrs(estaticos);
 
     if (porta < 0) { porta = portFromToml(root, 3000); }
 
-    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  pages/${rel}`); }
-    for (const rel of estaticos) { Terminal.log(`  /${rel}  ←  public/${rel}`); }
+    for (const rel of pages) { Terminal.log(`  ${pageRoute(rel)}  ←  ${pagesDir}/${rel}`); }
+    for (const rel of estaticos) { Terminal.log(`  /${rel}  ←  ${publicDir}/${rel}`); }
 
     // `--build`: compila e sai (para Docker)
     if (!strEq(saidaBin, "")) {
@@ -697,7 +705,7 @@ fn showHelp(): void {
     Terminal.log("  fmt [--check] <arquivos...>      formata codigo (in-place ou confere)");
     Terminal.log("  test <arquivos.test.lex>...      roda suites de teste");
     Terminal.log("  check [--json] <arquivos...>     diagnosticos em JSON");
-    Terminal.log("  server [--port N] [--watch] [dir] sobe servidor web de pages/");
+    Terminal.log("  server [--port N] [--watch] [dir] sobe servidor web de src/pages/");
     Terminal.log("  lsp                              Language Server (stdio)");
     Terminal.log("  pkg <init|add|remove|list>       gerenciador de pacotes");
     Terminal.log("  init [dir]                       cria estrutura de projeto");
@@ -755,25 +763,25 @@ fn cmdInit(av: string[]): i64 {
         Terminal.log(`criado: ${mainPath}`);
     }
 
-    // pages/
-    const pagesDir: string = concat(dir, "/pages");
+    // src/pages/
+    const pagesDir: string = concat(srcDir, "/pages");
     if (isDir(pagesDir) == 0) {
         system(`mkdir -p ${shellQuote(pagesDir)}`);
         Terminal.log(`criado: ${pagesDir}/`);
     }
 
-    // pages/index.lsx
+    // src/pages/index.lsx
     const indexPath: string = concat(pagesDir, "/index.lsx");
     if (exists(indexPath)) {
         Terminal.log(`aviso: '${indexPath}' ja existe, pulando`);
     } else {
-        const indexContent: string = "---\n// index.lsx - pagina inicial\nLex.title = \"Meu Projeto\";\nLex.lang = \"pt-BR\";\n---\n\n<h1>Bem-vindo ao Lex!</h1>\n<p>Edite este arquivo em <code>pages/index.lsx</code></p>\n\n<style>\n    h1 { font-family: system-ui, sans-serif; }\n    code { background: #f4f4f5; padding: 0.2em 0.4em; border-radius: 4px; }\n</style>\n";
+        const indexContent: string = "---\n// index.lsx - pagina inicial\nLex.title = \"Meu Projeto\";\nLex.lang = \"pt-BR\";\n---\n\n<h1>Bem-vindo ao Lex!</h1>\n<p>Edite este arquivo em <code>src/pages/index.lsx</code></p>\n\n<style>\n    h1 { font-family: system-ui, sans-serif; }\n    code { background: #f4f4f5; padding: 0.2em 0.4em; border-radius: 4px; }\n</style>\n";
         writeFile(indexPath, indexContent);
         Terminal.log(`criado: ${indexPath}`);
     }
 
-    // public/
-    const publicDir: string = concat(dir, "/public");
+    // src/public/
+    const publicDir: string = concat(srcDir, "/public");
     if (isDir(publicDir) == 0) {
         system(`mkdir -p ${shellQuote(publicDir)}`);
         Terminal.log(`criado: ${publicDir}/`);
