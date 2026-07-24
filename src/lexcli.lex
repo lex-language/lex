@@ -19,7 +19,7 @@
 import { compileFileToIR, compileFileToIRT, findRuntime } from "./compiler/modloader"
 
 // ── versão ────────────────────────────────────────────────────────────────────
-const LEX_VERSION: string = "0.1.8";
+const LEX_VERSION: string = "0.1.9";
 const LEX_REPO: string = "lex-language/lex";
 const LEX_RELEASES_URL: string = "https://github.com/lex-language/lex/releases";
 import { formatSource, formatLsx } from "./tools/fmt"
